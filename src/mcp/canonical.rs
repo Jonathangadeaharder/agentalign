@@ -5,9 +5,9 @@
 //! { "mcp": { "server_name": { "type": "local", "command": ["npx", "..."], ... } } }
 //! ```
 
-use agentalign_shared::error::Result;
-use agentalign_shared::models::{CanonicalWorkspaceState, ClientCapabilities};
-use agentalign_shared::traits::{ConfigurationAdapter, McpFormatStrategy};
+use crate::shared::error::Result;
+use crate::shared::models::{CanonicalWorkspaceState, ClientCapabilities};
+use crate::shared::traits::{ConfigurationAdapter, McpFormatStrategy};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,7 +53,7 @@ impl McpFormatStrategy for CanonicalStrategy {
             supports_sse: true,
             supports_http: true,
             supports_env_section: true,
-            placeholder_style: agentalign_shared::models::PlaceholderStyle::DollarBrace,
+            placeholder_style: crate::shared::models::PlaceholderStyle::DollarBrace,
             max_id_length: None,
             forbidden_id_chars: vec![],
             requires_security_sandbox: false,

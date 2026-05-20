@@ -1,5 +1,5 @@
 use agentalign::sync::transaction;
-use agentalign_shared::models::{CanonicalWorkspaceState, McpServerDefinition};
+use agentalign::shared::models::{CanonicalWorkspaceState, McpServerDefinition};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::fs;
@@ -122,7 +122,7 @@ fn main() {
                         .map(|(k, v)| {
                             let def = serde_json::from_value(v)
                                 .unwrap_or_else(|_| McpServerDefinition {
-                                    transport: agentalign_shared::models::TransportType::Local,
+                                    transport: agentalign::shared::models::TransportType::Local,
                                     command: None,
                                     url: None,
                                     headers: None,
@@ -228,13 +228,13 @@ fn main() {
                             println!("{}", "-".repeat(130));
                             for tx in &transactions {
                                 let status = match tx.status {
-                                    agentalign_shared::models::TransactionStatus::Pending => {
+                                    agentalign::shared::models::TransactionStatus::Pending => {
                                         "pending"
                                     }
-                                    agentalign_shared::models::TransactionStatus::Committed => {
+                                    agentalign::shared::models::TransactionStatus::Committed => {
                                         "committed"
                                     }
-                                    agentalign_shared::models::TransactionStatus::RolledBack => {
+                                    agentalign::shared::models::TransactionStatus::RolledBack => {
                                         "rolled_back"
                                     }
                                 };

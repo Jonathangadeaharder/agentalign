@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use std::fs;
 use toml_edit::{DocumentMut, InlineTable, value, table as tbl_value, Item};
 
-use agentalign_shared::models::{SyncTransaction, TransactionStatus};
+use crate::shared::models::{SyncTransaction, TransactionStatus};
 
 fn cache_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Cannot find home directory")?;

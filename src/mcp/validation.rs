@@ -3,8 +3,8 @@
 //! Checks that a canonical workspace state can be safely serialised
 //! for the target agent without loss or rejection.
 
-use agentalign_shared::error::{AdapterError, Result};
-use agentalign_shared::models::{CanonicalWorkspaceState, TransportType};
+use crate::shared::error::{AdapterError, Result};
+use crate::shared::models::{CanonicalWorkspaceState, TransportType};
 
 /// Validate server IDs for forbidden characters.
 pub fn check_forbidden_chars(
@@ -120,7 +120,7 @@ pub fn check_toml_key_safety(name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentalign_shared::models::{CanonicalWorkspaceState, McpServerDefinition, TransportType};
+    use crate::shared::models::{CanonicalWorkspaceState, McpServerDefinition, TransportType};
     use std::collections::HashMap;
 
     fn make_state(name: &str, transport: TransportType) -> CanonicalWorkspaceState {

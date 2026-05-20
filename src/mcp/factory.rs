@@ -1,6 +1,6 @@
 //! Factory for creating MCP format strategies by agent type.
 
-use agentalign_shared::traits::McpFormatStrategy;
+use crate::shared::traits::McpFormatStrategy;
 
 /// Supported agent types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -16,9 +16,9 @@
 //! Remote servers use a bare `url` field (no explicit transport type).
 //! `env` section is **not** supported by Claude Desktop (returns empty).
 
-use agentalign_shared::error::{AdapterError, Result};
-use agentalign_shared::models::{CanonicalWorkspaceState, ClientCapabilities};
-use agentalign_shared::traits::{ConfigurationAdapter, McpFormatStrategy};
+use crate::shared::error::{AdapterError, Result};
+use crate::shared::models::{CanonicalWorkspaceState, ClientCapabilities};
+use crate::shared::traits::{ConfigurationAdapter, McpFormatStrategy};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;

@@ -17,11 +17,11 @@
 //!
 //! Windsurf may write additional fields like `"sandbox": {}` or `"security"` settings.
 
-use agentalign_shared::error::{AdapterError, Result};
-use agentalign_shared::models::{
+use crate::shared::error::{AdapterError, Result};
+use crate::shared::models::{
     CanonicalWorkspaceState, ClientCapabilities,
 };
-use agentalign_shared::traits::{ConfigurationAdapter, McpFormatStrategy};
+use crate::shared::traits::{ConfigurationAdapter, McpFormatStrategy};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;

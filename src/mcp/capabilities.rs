@@ -1,4 +1,4 @@
-use agentalign_shared::models::{ClientCapabilities, PlaceholderStyle};
+use crate::shared::models::{ClientCapabilities, PlaceholderStyle};
 
 /// Returns the capability matrix for Claude Desktop.
 pub fn claude_capabilities() -> ClientCapabilities {

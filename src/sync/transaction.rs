@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use uuid::Uuid;
 
-use agentalign_shared::models::{SyncTransaction, TransactionStatus};
+use crate::shared::models::{SyncTransaction, TransactionStatus};
 
 use super::cache;
 

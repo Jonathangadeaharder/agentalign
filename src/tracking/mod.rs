@@ -1,6 +1,6 @@
 pub mod keychain;
 
-use agentalign_shared::error::{AdapterError, Result};
+use crate::shared::error::{AdapterError, Result};
 
 /// Abstraction for secret storage. Production uses OS keychain; tests use in-memory HashMap.
 pub trait SecretVault {

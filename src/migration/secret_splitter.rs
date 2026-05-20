@@ -1,4 +1,4 @@
-use agentalign_shared::models::SecretMapping;
+use crate::shared::models::SecretMapping;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 

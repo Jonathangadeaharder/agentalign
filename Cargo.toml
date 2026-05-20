@@ -5,7 +5,6 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-agentalign-shared = { git = "https://github.com/Jonathangadeaharder/agentalign-shared.git" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

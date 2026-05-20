@@ -1,10 +1,10 @@
 //! Re-exports and helper utilities for the ~McpFormatStrategy~ trait.
 
-pub use agentalign_shared::traits::ConfigurationAdapter;
-pub use agentalign_shared::traits::McpFormatStrategy;
+pub use crate::shared::traits::ConfigurationAdapter;
+pub use crate::shared::traits::McpFormatStrategy;
 
-use agentalign_shared::error::Result;
-use agentalign_shared::models::CanonicalWorkspaceState;
+use crate::shared::error::Result;
+use crate::shared::models::CanonicalWorkspaceState;
 
 /// Validate a canonical workspace state against ALL registered strategies.
 /// Returns Ok(()) only if every strategy validates successfully.

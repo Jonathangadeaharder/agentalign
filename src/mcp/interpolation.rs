@@ -12,7 +12,7 @@
 //! Resolves `${ENV_AGENTALIGN_SECRET_*}` placeholders injected by the
 //! secret-splitting migration step back to actual secret values.
 
-use agentalign_shared::models::PlaceholderStyle;
+use crate::shared::models::PlaceholderStyle;
 use std::collections::HashMap;
 
 // ─── Dialect Normalization ────────────────────────────────────────────────
