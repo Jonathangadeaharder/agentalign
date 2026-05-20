@@ -1,0 +1,26 @@
+[package]
+name = "agentalign"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+agentalign-shared = { git = "https://github.com/Jonathangadeaharder/agentalign-shared.git" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = "0.22"
+thiserror = "2"
+anyhow = "1"
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+keyring = "3"
+walkdir = "2"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"

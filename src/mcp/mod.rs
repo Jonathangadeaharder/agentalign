@@ -1,0 +1,13 @@
+pub mod canonical;
+pub mod capabilities;
+pub mod claude;
+pub mod codex;
+pub mod copilot;
+pub mod factory;
+pub mod gemini;
+pub mod interpolation;
+pub mod strategy;
+pub mod validation;
+pub mod vscode;
+pub mod windsurf;
+pub mod zed;
