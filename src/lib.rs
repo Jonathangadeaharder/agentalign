@@ -1,5 +1,9 @@
+pub mod instructions;
 pub mod mcp;
+pub mod magic;
 pub mod migration;
 pub mod shared;
+pub mod state;
 pub mod sync;
 pub mod tracking;
+pub mod watch;

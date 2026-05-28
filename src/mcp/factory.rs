@@ -13,6 +13,7 @@ pub enum AgentType {
     Zed,
     Gemini,
     Codex,
+    OpenCode,
 }
 
 impl AgentType {
@@ -27,6 +28,7 @@ impl AgentType {
             AgentType::Zed,
             AgentType::Gemini,
             AgentType::Codex,
+            AgentType::OpenCode,
         ]
     }
 
@@ -41,6 +43,7 @@ impl AgentType {
             AgentType::Zed => "zed",
             AgentType::Gemini => "gemini",
             AgentType::Codex => "codex",
+            AgentType::OpenCode => "opencode",
         }
     }
 
@@ -55,6 +58,7 @@ impl AgentType {
             "zed" => Some(AgentType::Zed),
             "gemini" => Some(AgentType::Gemini),
             "codex" => Some(AgentType::Codex),
+            "opencode" => Some(AgentType::OpenCode),
             _ => None,
         }
     }
@@ -75,6 +79,7 @@ impl McpFormatFactory {
             AgentType::Zed => Box::new(super::zed::ZedStrategy),
             AgentType::Gemini => Box::new(super::gemini::GeminiStrategy::default()),
             AgentType::Codex => Box::new(super::codex::CodexStrategy),
+            AgentType::OpenCode => Box::new(super::opencode::OpenCodeStrategy),
         }
     }
 
@@ -91,7 +96,7 @@ mod tests {
     #[test]
     fn test_all_agents_non_empty() {
         let strategies = McpFormatFactory::all_agents();
-        assert_eq!(strategies.len(), 8);
+        assert_eq!(strategies.len(), 9);
     }
 
     #[test]
@@ -104,5 +109,6 @@ mod tests {
         assert_eq!(McpFormatFactory::from_agent(AgentType::Zed).target_name(), "zed");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Gemini).target_name(), "gemini");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Codex).target_name(), "codex");
+        assert_eq!(McpFormatFactory::from_agent(AgentType::OpenCode).target_name(), "opencode");
     }
 }

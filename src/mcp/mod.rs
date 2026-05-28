@@ -6,6 +6,7 @@ pub mod copilot;
 pub mod factory;
 pub mod gemini;
 pub mod interpolation;
+pub mod opencode;
 pub mod strategy;
 pub mod validation;
 pub mod vscode;
