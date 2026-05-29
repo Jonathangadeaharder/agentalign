@@ -13,6 +13,13 @@ pub trait ConfigurationAdapter {
     fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf;
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String>;
     fn extract_unknowns(&self, raw: &JsonValue) -> HashMap<String, JsonValue>;
+
+    /// Post-sync cleanup: remove orphan entries that reference removed MCP servers.
+    /// Called after serialize_from_canonical writes the mcp section.
+    /// Default is no-op; OpenCode overrides to clean orphan tool rules.
+    fn post_sync_cleanup(&self, _doc: &mut JsonValue, _mcp_server_names: &std::collections::HashSet<String>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Strategy for multi-client MCP format translation.

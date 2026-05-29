@@ -1,5 +1,5 @@
 use agentalign::sync::transaction;
-use agentalign::shared::models::{CanonicalWorkspaceState, McpServerDefinition};
+use agentalign::shared::models::{CanonicalWorkspaceState, McpServerDefinition, TransportType};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::fs;
@@ -26,6 +26,48 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Add an MCP server to canonical config and propagate
+    Add {
+        /// Server name
+        name: String,
+
+        /// Server type: local or remote
+        #[arg(long, default_value = "local")]
+        r#type: String,
+
+        /// Command for local servers (e.g., "npx @pkg/mcp")
+        #[arg(long)]
+        command: Option<String>,
+
+        /// URL for remote servers
+        #[arg(long)]
+        url: Option<String>,
+
+        /// Whether server is enabled
+        #[arg(long, default_value = "true")]
+        enabled: bool,
+
+        /// Don't sync to agents after adding
+        #[arg(long)]
+        no_sync: bool,
+
+        /// Preview without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove an MCP server from canonical config and propagate
+    Remove {
+        /// Server name to remove
+        name: String,
+
+        /// Don't sync to agents after removing
+        #[arg(long)]
+        no_sync: bool,
+
+        /// Preview removal without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Roll back the last sync transaction
     Restore {
         /// Rollback specific agent (all agents if omitted)
@@ -40,6 +82,23 @@ enum Commands {
         #[arg(long)]
         list: bool,
     },
+    /// Toggle automatic bidirectional sync (magic mode)
+    Magic {
+        #[command(subcommand)]
+        action: MagicAction,
+    },
+    /// Run the file watcher daemon (used by LaunchAgent)
+    Watch,
+}
+
+#[derive(Subcommand)]
+enum MagicAction {
+    /// Enable magic mode (install LaunchAgent)
+    On,
+    /// Disable magic mode (remove LaunchAgent)
+    Off,
+    /// Show magic mode status
+    Status,
 }
 
 /// Locate known agent config directories on this system.
@@ -173,7 +232,7 @@ fn main() {
                 ("Claude", agentalign::mcp::factory::AgentType::Claude),
                 ("Cursor", agentalign::mcp::factory::AgentType::Cursor),
                 ("Gemini", agentalign::mcp::factory::AgentType::Gemini),
-                ("OpenCode", agentalign::mcp::factory::AgentType::Codex),
+                ("OpenCode", agentalign::mcp::factory::AgentType::OpenCode),
             ];
 
             for (label, agent_type) in &agents {
@@ -188,6 +247,16 @@ fn main() {
 
                     match strategy.serialize_from_canonical(&state_json, &home) {
                     Ok(output) => {
+                        // Non-destructive: skip if content unchanged
+                        if target_path.exists() {
+                            if let Ok(existing) = fs::read_to_string(&target_path) {
+                                if existing == output {
+                                    println!("  {} -> {} (unchanged, skipped)", label, target_path.display());
+                                    continue;
+                                }
+                            }
+                        }
+
                         // Create transaction and write
                         let tx = transaction::create_transaction(label, &target_path);
                         match tx {
@@ -211,7 +280,202 @@ fn main() {
                     }
                 }
             }
+            // Heal instruction file symlinks after MCP sync
+            match agentalign::instructions::heal_all(&home) {
+                Ok(fixed) => {
+                    if fixed > 0 {
+                        println!("  instruction symlinks healed: {}", fixed);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  instruction symlink error: {}", e);
+                }
+            }
+
             println!("Sync complete.");
+        }
+
+        Commands::Add {
+            name,
+            r#type,
+            command,
+            url,
+            enabled,
+            no_sync,
+            dry_run,
+        } => {
+            let home = dirs::home_dir().expect("HOME must be set");
+            let agents_dir = home.join(".agents");
+            let canonical_path = agents_dir.join("mcp_config.json");
+
+            if !canonical_path.exists() {
+                eprintln!("No canonical config. Run `agentalign migrate` first.");
+                std::process::exit(1);
+            }
+
+            let raw = fs::read_to_string(&canonical_path).expect("Failed to read canonical config");
+            let mut canonical: CanonicalWorkspaceState =
+                serde_json::from_str(&raw).expect("Failed to parse canonical config");
+
+            if canonical.mcp.contains_key(&name) {
+                eprintln!("Server '{}' already exists in canonical config.", name);
+                std::process::exit(1);
+            }
+
+            let transport = match r#type.as_str() {
+                "local" => TransportType::Local,
+                "remote" => TransportType::Remote,
+                other => {
+                    eprintln!("Unknown type '{}'. Use 'local' or 'remote'.", other);
+                    std::process::exit(1);
+                }
+            };
+
+            let def = McpServerDefinition {
+                transport,
+                command: command.map(|c| c.split_whitespace().map(String::from).collect()),
+                url,
+                headers: None,
+                env: None,
+                enabled: Some(enabled),
+                extra: HashMap::new(),
+            };
+
+            println!("+ {} ({})", name, r#type);
+
+            if dry_run {
+                println!("[DRY RUN] Would add server '{}' to canonical config.", name);
+            } else {
+                canonical.mcp.insert(name.clone(), def);
+                let json =
+                    serde_json::to_string_pretty(&canonical).expect("Failed to serialize");
+                fs::write(&canonical_path, &json).expect("Failed to write canonical config");
+                println!("Added '{}' to canonical config.", name);
+
+                if !no_sync {
+                    // Re-run sync logic inline
+                    let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
+                        ("claude", agentalign::mcp::factory::AgentType::Claude),
+                        ("cursor", agentalign::mcp::factory::AgentType::Cursor),
+                        ("gemini", agentalign::mcp::factory::AgentType::Gemini),
+                        ("opencode", agentalign::mcp::factory::AgentType::OpenCode),
+                        ("codex", agentalign::mcp::factory::AgentType::Codex),
+                    ];
+                    let state_json =
+                        serde_json::to_value(&canonical).expect("Failed to serialize state");
+                    for (label, agent_type) in &agents {
+                        let strategy =
+                            agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
+                        let target_path = strategy.target_config_path(&home);
+                        if let Some(parent) = target_path.parent() {
+                            fs::create_dir_all(parent).ok();
+                        }
+                        match strategy.serialize_from_canonical(&state_json, &home) {
+                            Ok(output) => {
+                                let tx = transaction::create_transaction(label, &target_path);
+                                match tx {
+                                    Ok(tx) => {
+                                        fs::write(&target_path, &output)
+                                            .expect("Failed to write config");
+                                        transaction::finalize_transaction(&tx, output.as_bytes())
+                                            .ok();
+                                        println!(
+                                            "  {} -> {} ({} servers)",
+                                            label,
+                                            target_path.display(),
+                                            canonical.mcp.len()
+                                        );
+                                    }
+                                    Err(e) => eprintln!("  {} tx error: {}", label, e),
+                                }
+                            }
+                            Err(e) => eprintln!("  {} serialize error: {}", label, e),
+                        }
+                    }
+                    println!("Sync complete.");
+                }
+            }
+        }
+
+        Commands::Remove {
+            name,
+            no_sync,
+            dry_run,
+        } => {
+            let home = dirs::home_dir().expect("HOME must be set");
+            let agents_dir = home.join(".agents");
+            let canonical_path = agents_dir.join("mcp_config.json");
+
+            if !canonical_path.exists() {
+                eprintln!("No canonical config. Run `agentalign migrate` first.");
+                std::process::exit(1);
+            }
+
+            let raw = fs::read_to_string(&canonical_path).expect("Failed to read canonical config");
+            let mut canonical: CanonicalWorkspaceState =
+                serde_json::from_str(&raw).expect("Failed to parse canonical config");
+
+            if !canonical.mcp.contains_key(&name) {
+                eprintln!("Server '{}' not found in canonical config.", name);
+                std::process::exit(1);
+            }
+
+            println!("- {}", name);
+
+            if dry_run {
+                println!(
+                    "[DRY RUN] Would remove server '{}' from canonical config.",
+                    name
+                );
+            } else {
+                canonical.mcp.remove(&name);
+                let json =
+                    serde_json::to_string_pretty(&canonical).expect("Failed to serialize");
+                fs::write(&canonical_path, &json).expect("Failed to write canonical config");
+                println!("Removed '{}' from canonical config.", name);
+
+                if !no_sync {
+                    let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
+                        ("claude", agentalign::mcp::factory::AgentType::Claude),
+                        ("cursor", agentalign::mcp::factory::AgentType::Cursor),
+                        ("gemini", agentalign::mcp::factory::AgentType::Gemini),
+                        ("opencode", agentalign::mcp::factory::AgentType::OpenCode),
+                        ("codex", agentalign::mcp::factory::AgentType::Codex),
+                    ];
+                    let state_json =
+                        serde_json::to_value(&canonical).expect("Failed to serialize state");
+                    for (label, agent_type) in &agents {
+                        let strategy =
+                            agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
+                        let target_path = strategy.target_config_path(&home);
+                        if let Some(parent) = target_path.parent() {
+                            fs::create_dir_all(parent).ok();
+                        }
+                        match strategy.serialize_from_canonical(&state_json, &home) {
+                            Ok(output) => {
+                                let tx = transaction::create_transaction(label, &target_path);
+                                match tx {
+                                    Ok(tx) => {
+                                        fs::write(&target_path, &output)
+                                            .expect("Failed to write config");
+                                        transaction::finalize_transaction(&tx, output.as_bytes())
+                                            .ok();
+                                        println!(
+                                            "  {} -> {} ({} servers)",
+                                            label,
+                                            target_path.display(),
+                                            canonical.mcp.len()
+                                        );
+                                    }
+                                    Err(e) => eprintln!("  {} tx error: {}", label, e),
+                                }
+                            }
+                            Err(e) => eprintln!("  {} serialize error: {}", label, e),
+                        }
+                    }
+                    println!("Sync complete.");
+                }
+            }
         }
 
         Commands::Restore { agent, id, list } => {
@@ -266,6 +530,34 @@ fn main() {
             }
         }
 
+        Commands::Magic { action } => {
+            match action {
+                MagicAction::On => {
+                    if let Err(e) = agentalign::magic::enable() {
+                        eprintln!("Failed to enable magic mode: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                MagicAction::Off => {
+                    if let Err(e) = agentalign::magic::disable() {
+                        eprintln!("Failed to disable magic mode: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                MagicAction::Status => {
+                    if let Err(e) = agentalign::magic::status() {
+                        eprintln!("Failed to get status: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
 
+        Commands::Watch => {
+            if let Err(e) = agentalign::watch::run_daemon() {
+                eprintln!("Watch daemon error: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 }
