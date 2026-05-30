@@ -3,6 +3,7 @@ pub mod mcp;
 pub mod magic;
 pub mod migration;
 pub mod shared;
+pub mod skills;
 pub mod state;
 pub mod sync;
 pub mod tracking;

@@ -26,17 +26,10 @@ use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;
 
+#[derive(Default)]
 pub struct GeminiStrategy {
     /// Whether this is an Antigravity variant.
     pub is_antigravity: bool,
-}
-
-impl Default for GeminiStrategy {
-    fn default() -> Self {
-        Self {
-            is_antigravity: false,
-        }
-    }
 }
 
 impl ConfigurationAdapter for GeminiStrategy {
@@ -135,7 +128,7 @@ impl ConfigurationAdapter for GeminiStrategy {
                 if let Some(first) = cmd_arr.first().and_then(|v| v.as_str()) {
                     agent_entry.insert("command".into(), json!(first));
                     if cmd_arr.len() > 1 {
-                        let args: Vec<JsonValue> = cmd_arr[1..].iter().map(|v| v.clone()).collect();
+                        let args: Vec<JsonValue> = cmd_arr[1..].to_vec();
                         agent_entry.insert("args".into(), JsonValue::Array(args));
                     }
                 }

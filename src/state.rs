@@ -12,22 +12,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Sync state persisted to disk.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SyncState {
     /// Map of file identifier → content hash.
     pub hashes: HashMap<String, String>,
     /// ISO 8601 timestamp of last sync.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sync: Option<String>,
-}
-
-impl Default for SyncState {
-    fn default() -> Self {
-        Self {
-            hashes: HashMap::new(),
-            last_sync: None,
-        }
-    }
 }
 
 impl SyncState {

@@ -10,6 +10,7 @@
 //! - `agentalign watch` (on daemon startup and on file change events)
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix;
 use std::path::{Path, PathBuf};
 
@@ -151,7 +152,16 @@ impl InstructionEntry {
         }
 
         // Create the symlink
+        #[cfg(unix)]
         unix::fs::symlink(canonical_path, &self.symlink_path)?;
+        #[cfg(not(unix))]
+        {
+            eprintln!(
+                "  warning: symlinks not supported on this platform, skipping {}",
+                self.agent
+            );
+            return Ok(false);
+        }
 
         println!(
             "  {} -> {} (symlink to canonical)",
@@ -191,14 +201,16 @@ pub fn verify_all(home: &Path) -> Vec<(&'static str, SymlinkState)> {
 /// Heal all instruction symlinks. Returns the number of symlinks that were fixed.
 ///
 /// Prints progress to stdout. Silent if all OK.
+/// Warns and returns 0 if canonical instruction file is missing (does not bail).
 pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     let canonical = canonical_path(home);
 
     if !canonical.exists() {
-        anyhow::bail!(
-            "Canonical instruction file not found at {}. Create it first.",
+        eprintln!(
+            "  warning: canonical instruction file not found at {} — skipping instruction sync",
             canonical.display()
         );
+        return Ok(0);
     }
 
     let entries = registry(home);
@@ -218,10 +230,11 @@ pub fn heal_one(home: &Path, agent: &str) -> anyhow::Result<bool> {
     let canonical = canonical_path(home);
 
     if !canonical.exists() {
-        anyhow::bail!(
-            "Canonical instruction file not found at {}. Create it first.",
+        eprintln!(
+            "  warning: canonical instruction file not found at {} — skipping",
             canonical.display()
         );
+        return Ok(false);
     }
 
     let entries = registry(home);
@@ -372,24 +385,35 @@ mod tests {
     }
 
     #[test]
-    fn test_heal_all_errors_if_canonical_missing() {
+    fn test_heal_all_warns_if_canonical_missing() {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
 
+        // Should return Ok(0) and warn, not error
         let result = heal_all(&home);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Canonical instruction file not found")
-        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_heal_one_warns_if_canonical_missing() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+
+        let result = heal_one(&home, "claude");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
     }
 
     #[test]
     fn test_heal_one_unknown_agent() {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
+        let canonical = canonical_path(&home);
+
+        // Create canonical so we get past the missing-file check
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, b"# Canonical instruction file").unwrap();
 
         let result = heal_one(&home, "nonexistent");
         assert!(result.is_err());

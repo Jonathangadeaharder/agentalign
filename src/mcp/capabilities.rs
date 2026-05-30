@@ -134,3 +134,18 @@ pub fn opencode_capabilities() -> ClientCapabilities {
         requires_security_sandbox: false,
     }
 }
+
+/// Returns the capability matrix for Antigravity.
+pub fn antigravity_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        name: "antigravity".into(),
+        supports_stdio: true,
+        supports_sse: true,
+        supports_http: true,
+        supports_env_section: true,
+        placeholder_style: PlaceholderStyle::DollarBrace,
+        max_id_length: None,
+        forbidden_id_chars: vec![],
+        requires_security_sandbox: false,
+    }
+}
