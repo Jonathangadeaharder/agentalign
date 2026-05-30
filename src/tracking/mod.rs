@@ -27,6 +27,12 @@ pub struct InMemoryVault {
     secrets: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
+impl Default for InMemoryVault {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryVault {
     pub fn new() -> Self {
         Self {

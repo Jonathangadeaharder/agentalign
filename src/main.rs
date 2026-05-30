@@ -1,9 +1,11 @@
-use agentalign::sync::transaction;
+use agentalign::mcp::factory::{AgentRegistry, McpFormatFactory};
 use agentalign::shared::models::{CanonicalWorkspaceState, McpServerDefinition, TransportType};
+use agentalign::sync::transaction;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(name = "agentalign", about = "Agent Configuration Unification Engine")]
@@ -101,71 +103,154 @@ enum MagicAction {
     Status,
 }
 
-/// Locate known agent config directories on this system.
-fn discover_agent_configs() -> Vec<(&'static str, PathBuf)> {
-    let home = dirs::home_dir().expect("HOME must be set");
-    let mut found = Vec::new();
+/// Push canonical config to all synced agents with transaction tracking.
+///
+/// Single shared implementation used by `sync`, `add`, and `remove` commands.
+fn push_to_agents(
+    canonical: &CanonicalWorkspaceState,
+    home: &Path,
+) -> Result<()> {
+    let agents = AgentRegistry::synced_agents(home);
+    let state_json = serde_json::to_value(canonical)
+        .context("Failed to serialize canonical state")?;
 
-    let paths: Vec<(&str, PathBuf)> = vec![
-        ("claude", home.join(".claude").join(".mcp.json")),
-        ("cursor", home.join(".cursor").join("mcp.json")),
-        (
-            "gemini",
-            home.join(".gemini").join("config").join("mcp_config.json"),
-        ),
-        (
-            "opencode",
-            home.join(".config").join("opencode").join("opencode.json"),
-        ),
-    ];
+    for descriptor in &agents {
+        let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
+        let target_path = &descriptor.config_path;
 
-    for (name, path) in paths {
-        if path.exists() {
-            found.push((name, path));
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+
+        // Validate before writing
+        if let Err(e) = strategy.validate(canonical) {
+            eprintln!("  {} validation error: {}", descriptor.label, e);
+            continue;
+        }
+
+        match strategy.serialize_from_canonical(&state_json, home) {
+            Ok(output) => {
+                // Non-destructive: skip if content unchanged
+                if target_path.exists() {
+                    if let Ok(existing) = fs::read_to_string(target_path) {
+                        if existing == output {
+                            println!(
+                                "  {} -> {} (unchanged, skipped)",
+                                descriptor.label,
+                                target_path.display()
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                // Create transaction and write
+                match transaction::create_transaction(descriptor.label, target_path) {
+                    Ok(tx) => {
+                        fs::write(target_path, &output)
+                            .with_context(|| format!("Failed to write {}", target_path.display()))?;
+                        transaction::finalize_transaction(&tx, output.as_bytes()).ok();
+                        println!(
+                            "  {} -> {} ({} servers)",
+                            descriptor.label,
+                            target_path.display(),
+                            canonical.mcp.len()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("  {} tx error: {}", descriptor.label, e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  {} serialize error: {}", descriptor.label, e);
+            }
         }
     }
 
-    found
+    // Heal instruction file symlinks
+    match agentalign::instructions::heal_all(home) {
+        Ok(fixed) => {
+            if fixed > 0 {
+                println!("  instruction symlinks healed: {}", fixed);
+            }
+        }
+        Err(e) => {
+            eprintln!("  instruction symlink error: {}", e);
+        }
+    }
+
+    // Heal skills symlinks
+    match agentalign::skills::heal_all(home) {
+        Ok(fixed) => {
+            if fixed > 0 {
+                println!("  skills symlinks healed: {}", fixed);
+            }
+        }
+        Err(e) => {
+            eprintln!("  skills symlink error: {}", e);
+        }
+    }
+
+    Ok(())
 }
 
-fn main() {
+/// Load and parse the canonical config from disk.
+fn load_canonical(home: &Path) -> Result<CanonicalWorkspaceState> {
+    let canonical_path = home.join(".agents").join("mcp_config.json");
+    if !canonical_path.exists() {
+        anyhow::bail!(
+            "No canonical config at {}. Run `agentalign migrate` first.",
+            canonical_path.display()
+        );
+    }
+    let raw = fs::read_to_string(&canonical_path)
+        .context("Failed to read canonical config")?;
+    let canonical: CanonicalWorkspaceState = serde_json::from_str(&raw)
+        .context("Failed to parse canonical config")?;
+    Ok(canonical)
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
+    let home = dirs::home_dir().context("HOME environment variable must be set")?;
 
     match cli.command {
         Commands::Migrate { dry_run } => {
-            let home = dirs::home_dir().expect("HOME must be set");
             let agents_dir = home.join(".agents");
 
             if dry_run {
-                println!("[DRY RUN] Would scan and migrate agent configs into: {}", agents_dir.display());
+                println!(
+                    "[DRY RUN] Would scan and migrate agent configs into: {}",
+                    agents_dir.display()
+                );
             } else {
-                fs::create_dir_all(&agents_dir).expect("Failed to create ~/.agents/");
+                fs::create_dir_all(&agents_dir).context("Failed to create ~/.agents/")?;
                 fs::create_dir_all(agents_dir.join("skills")).ok();
                 fs::create_dir_all(agents_dir.join("backups")).ok();
                 println!("Created ~/.agents/ directory structure.");
             }
 
-            let discovered = discover_agent_configs();
+            let discovered = AgentRegistry::discovered_agents(&home);
             if discovered.is_empty() {
                 println!("No existing agent configs found. Nothing to migrate.");
-                return;
+                return Ok(());
             }
 
             println!("Discovered {} agent config(s):", discovered.len());
             let mut merged = serde_json::Map::new();
 
-            for (agent, path) in &discovered {
-                println!("  {} -> {}", agent, path.display());
+            for descriptor in &discovered {
+                println!(
+                    "  {} -> {}",
+                    descriptor.label,
+                    descriptor.config_path.display()
+                );
                 if !dry_run {
-                    let raw = fs::read_to_string(path).unwrap_or_default();
-                    let agent_type = agentalign::mcp::factory::AgentType::from_name(agent)
-                        .expect("Unknown agent type");
-                    let strategy = agentalign::mcp::factory::McpFormatFactory::from_agent(agent_type);
+                    let raw = fs::read_to_string(&descriptor.config_path).unwrap_or_default();
+                    let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
                     if let Ok(canonical) = strategy.deserialize_to_canonical(&raw, &home) {
-                        if let Some(servers) = canonical
-                            .get("mcp")
-                            .and_then(|v| v.as_object())
-                        {
+                        if let Some(servers) = canonical.get("mcp").and_then(|v| v.as_object()) {
                             for (k, v) in servers {
                                 merged.insert(k.clone(), v.clone());
                             }
@@ -179,119 +264,43 @@ fn main() {
                     mcp: merged
                         .into_iter()
                         .map(|(k, v)| {
-                            let def = serde_json::from_value(v)
-                                .unwrap_or_else(|_| McpServerDefinition {
-                                    transport: agentalign::shared::models::TransportType::Local,
+                            let def = serde_json::from_value(v).unwrap_or_else(|_| {
+                                McpServerDefinition {
+                                    transport: TransportType::Local,
                                     command: None,
                                     url: None,
                                     headers: None,
                                     env: None,
                                     enabled: None,
                                     extra: HashMap::new(),
-                                });
+                                }
+                            });
                             (k, def)
                         })
                         .collect(),
                 };
                 let json = serde_json::to_string_pretty(&canonical)
-                    .expect("Failed to serialize canonical config");
+                    .context("Failed to serialize canonical config")?;
                 let mcp_path = agents_dir.join("mcp_config.json");
                 fs::write(&mcp_path, &json)
-                    .expect("Failed to write canonical MCP config");
+                    .context("Failed to write canonical MCP config")?;
                 println!("Wrote canonical config: {}", mcp_path.display());
-                println!("Migration complete. Run `agentalign sync` to push to all agents.");
+                println!(
+                    "Migration complete. Run `agentalign sync` to push to all agents."
+                );
             }
         }
 
         Commands::Sync { dry_run } => {
-            let home = dirs::home_dir().expect("HOME must be set");
-            let agents_dir = home.join(".agents");
-            let canonical_path = agents_dir.join("mcp_config.json");
-
-            if !canonical_path.exists() {
-                eprintln!(
-                    "No canonical config found at {}. Run `agentalign migrate` first.",
-                    canonical_path.display()
-                );
-                return;
-            }
-
-            let raw = fs::read_to_string(&canonical_path)
-                .expect("Failed to read canonical config");
-            let canonical: CanonicalWorkspaceState = serde_json::from_str(&raw)
-                .expect("Failed to parse canonical config");
+            let canonical = load_canonical(&home)?;
 
             if dry_run {
                 println!("[DRY RUN] Would push canonical config to all configured agents.");
                 println!("  Servers in canonical: {}", canonical.mcp.len());
-                return;
+                return Ok(());
             }
 
-            // Build output for each agent
-            let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
-                ("Claude", agentalign::mcp::factory::AgentType::Claude),
-                ("Cursor", agentalign::mcp::factory::AgentType::Cursor),
-                ("Gemini", agentalign::mcp::factory::AgentType::Gemini),
-                ("OpenCode", agentalign::mcp::factory::AgentType::OpenCode),
-            ];
-
-            for (label, agent_type) in &agents {
-                let strategy = agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
-                let target_path = strategy.target_config_path(&home);
-                let parent = target_path.parent().unwrap();
-                fs::create_dir_all(parent).ok();
-
-                // Convert CanonicalWorkspaceState to JsonValue for the strategy
-                let state_json = serde_json::to_value(&canonical)
-                    .expect("Failed to serialize canonical state");
-
-                    match strategy.serialize_from_canonical(&state_json, &home) {
-                    Ok(output) => {
-                        // Non-destructive: skip if content unchanged
-                        if target_path.exists() {
-                            if let Ok(existing) = fs::read_to_string(&target_path) {
-                                if existing == output {
-                                    println!("  {} -> {} (unchanged, skipped)", label, target_path.display());
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // Create transaction and write
-                        let tx = transaction::create_transaction(label, &target_path);
-                        match tx {
-                            Ok(tx) => {
-                                fs::write(&target_path, &output)
-                                    .expect("Failed to write config");
-                                transaction::finalize_transaction(
-                                    &tx,
-                                    output.as_bytes(),
-                                )
-                                .ok();
-                                println!("  {} -> {} ({} servers)", label, target_path.display(), canonical.mcp.len());
-                            }
-                            Err(e) => {
-                                eprintln!("  {} error: {}", label, e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("  {} serialize error: {}", label, e);
-                    }
-                }
-            }
-            // Heal instruction file symlinks after MCP sync
-            match agentalign::instructions::heal_all(&home) {
-                Ok(fixed) => {
-                    if fixed > 0 {
-                        println!("  instruction symlinks healed: {}", fixed);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("  instruction symlink error: {}", e);
-                }
-            }
-
+            push_to_agents(&canonical, &home)?;
             println!("Sync complete.");
         }
 
@@ -304,18 +313,7 @@ fn main() {
             no_sync,
             dry_run,
         } => {
-            let home = dirs::home_dir().expect("HOME must be set");
-            let agents_dir = home.join(".agents");
-            let canonical_path = agents_dir.join("mcp_config.json");
-
-            if !canonical_path.exists() {
-                eprintln!("No canonical config. Run `agentalign migrate` first.");
-                std::process::exit(1);
-            }
-
-            let raw = fs::read_to_string(&canonical_path).expect("Failed to read canonical config");
-            let mut canonical: CanonicalWorkspaceState =
-                serde_json::from_str(&raw).expect("Failed to parse canonical config");
+            let mut canonical = load_canonical(&home)?;
 
             if canonical.mcp.contains_key(&name) {
                 eprintln!("Server '{}' already exists in canonical config.", name);
@@ -347,51 +345,15 @@ fn main() {
                 println!("[DRY RUN] Would add server '{}' to canonical config.", name);
             } else {
                 canonical.mcp.insert(name.clone(), def);
-                let json =
-                    serde_json::to_string_pretty(&canonical).expect("Failed to serialize");
-                fs::write(&canonical_path, &json).expect("Failed to write canonical config");
+                let json = serde_json::to_string_pretty(&canonical)
+                    .context("Failed to serialize")?;
+                let canonical_path = home.join(".agents").join("mcp_config.json");
+                fs::write(&canonical_path, &json)
+                    .context("Failed to write canonical config")?;
                 println!("Added '{}' to canonical config.", name);
 
                 if !no_sync {
-                    // Re-run sync logic inline
-                    let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
-                        ("claude", agentalign::mcp::factory::AgentType::Claude),
-                        ("cursor", agentalign::mcp::factory::AgentType::Cursor),
-                        ("gemini", agentalign::mcp::factory::AgentType::Gemini),
-                        ("opencode", agentalign::mcp::factory::AgentType::OpenCode),
-                        ("codex", agentalign::mcp::factory::AgentType::Codex),
-                    ];
-                    let state_json =
-                        serde_json::to_value(&canonical).expect("Failed to serialize state");
-                    for (label, agent_type) in &agents {
-                        let strategy =
-                            agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
-                        let target_path = strategy.target_config_path(&home);
-                        if let Some(parent) = target_path.parent() {
-                            fs::create_dir_all(parent).ok();
-                        }
-                        match strategy.serialize_from_canonical(&state_json, &home) {
-                            Ok(output) => {
-                                let tx = transaction::create_transaction(label, &target_path);
-                                match tx {
-                                    Ok(tx) => {
-                                        fs::write(&target_path, &output)
-                                            .expect("Failed to write config");
-                                        transaction::finalize_transaction(&tx, output.as_bytes())
-                                            .ok();
-                                        println!(
-                                            "  {} -> {} ({} servers)",
-                                            label,
-                                            target_path.display(),
-                                            canonical.mcp.len()
-                                        );
-                                    }
-                                    Err(e) => eprintln!("  {} tx error: {}", label, e),
-                                }
-                            }
-                            Err(e) => eprintln!("  {} serialize error: {}", label, e),
-                        }
-                    }
+                    push_to_agents(&canonical, &home)?;
                     println!("Sync complete.");
                 }
             }
@@ -402,18 +364,7 @@ fn main() {
             no_sync,
             dry_run,
         } => {
-            let home = dirs::home_dir().expect("HOME must be set");
-            let agents_dir = home.join(".agents");
-            let canonical_path = agents_dir.join("mcp_config.json");
-
-            if !canonical_path.exists() {
-                eprintln!("No canonical config. Run `agentalign migrate` first.");
-                std::process::exit(1);
-            }
-
-            let raw = fs::read_to_string(&canonical_path).expect("Failed to read canonical config");
-            let mut canonical: CanonicalWorkspaceState =
-                serde_json::from_str(&raw).expect("Failed to parse canonical config");
+            let mut canonical = load_canonical(&home)?;
 
             if !canonical.mcp.contains_key(&name) {
                 eprintln!("Server '{}' not found in canonical config.", name);
@@ -429,50 +380,15 @@ fn main() {
                 );
             } else {
                 canonical.mcp.remove(&name);
-                let json =
-                    serde_json::to_string_pretty(&canonical).expect("Failed to serialize");
-                fs::write(&canonical_path, &json).expect("Failed to write canonical config");
+                let json = serde_json::to_string_pretty(&canonical)
+                    .context("Failed to serialize")?;
+                let canonical_path = home.join(".agents").join("mcp_config.json");
+                fs::write(&canonical_path, &json)
+                    .context("Failed to write canonical config")?;
                 println!("Removed '{}' from canonical config.", name);
 
                 if !no_sync {
-                    let agents: Vec<(&str, agentalign::mcp::factory::AgentType)> = vec![
-                        ("claude", agentalign::mcp::factory::AgentType::Claude),
-                        ("cursor", agentalign::mcp::factory::AgentType::Cursor),
-                        ("gemini", agentalign::mcp::factory::AgentType::Gemini),
-                        ("opencode", agentalign::mcp::factory::AgentType::OpenCode),
-                        ("codex", agentalign::mcp::factory::AgentType::Codex),
-                    ];
-                    let state_json =
-                        serde_json::to_value(&canonical).expect("Failed to serialize state");
-                    for (label, agent_type) in &agents {
-                        let strategy =
-                            agentalign::mcp::factory::McpFormatFactory::from_agent(*agent_type);
-                        let target_path = strategy.target_config_path(&home);
-                        if let Some(parent) = target_path.parent() {
-                            fs::create_dir_all(parent).ok();
-                        }
-                        match strategy.serialize_from_canonical(&state_json, &home) {
-                            Ok(output) => {
-                                let tx = transaction::create_transaction(label, &target_path);
-                                match tx {
-                                    Ok(tx) => {
-                                        fs::write(&target_path, &output)
-                                            .expect("Failed to write config");
-                                        transaction::finalize_transaction(&tx, output.as_bytes())
-                                            .ok();
-                                        println!(
-                                            "  {} -> {} ({} servers)",
-                                            label,
-                                            target_path.display(),
-                                            canonical.mcp.len()
-                                        );
-                                    }
-                                    Err(e) => eprintln!("  {} tx error: {}", label, e),
-                                }
-                            }
-                            Err(e) => eprintln!("  {} serialize error: {}", label, e),
-                        }
-                    }
+                    push_to_agents(&canonical, &home)?;
                     println!("Sync complete.");
                 }
             }
@@ -530,34 +446,29 @@ fn main() {
             }
         }
 
-        Commands::Magic { action } => {
-            match action {
-                MagicAction::On => {
-                    if let Err(e) = agentalign::magic::enable() {
-                        eprintln!("Failed to enable magic mode: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                MagicAction::Off => {
-                    if let Err(e) = agentalign::magic::disable() {
-                        eprintln!("Failed to disable magic mode: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                MagicAction::Status => {
-                    if let Err(e) = agentalign::magic::status() {
-                        eprintln!("Failed to get status: {}", e);
-                        std::process::exit(1);
-                    }
-                }
+        Commands::Magic { action } => match action {
+            MagicAction::On => {
+                agentalign::magic::enable()?;
             }
-        }
+            MagicAction::Off => {
+                agentalign::magic::disable()?;
+            }
+            MagicAction::Status => {
+                agentalign::magic::status()?;
+            }
+        },
 
         Commands::Watch => {
-            if let Err(e) = agentalign::watch::run_daemon() {
-                eprintln!("Watch daemon error: {}", e);
-                std::process::exit(1);
-            }
+            agentalign::watch::run_daemon()?;
         }
+    }
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {:#}", e);
+        std::process::exit(1);
     }
 }

@@ -1,3 +1,4 @@
+pub mod antigravity;
 pub mod canonical;
 pub mod capabilities;
 pub mod claude;

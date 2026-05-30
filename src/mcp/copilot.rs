@@ -117,7 +117,7 @@ impl ConfigurationAdapter for CopilotStrategy {
                 if let Some(first) = cmd_arr.first().and_then(|v| v.as_str()) {
                     agent_entry.insert("command".into(), json!(first));
                     if cmd_arr.len() > 1 {
-                        let args: Vec<JsonValue> = cmd_arr[1..].iter().map(|v| v.clone()).collect();
+                        let args: Vec<JsonValue> = cmd_arr[1..].to_vec();
                         agent_entry.insert("args".into(), JsonValue::Array(args));
                     }
                 }

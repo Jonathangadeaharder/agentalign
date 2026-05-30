@@ -8,15 +8,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use anyhow::Context;
+
 const PLIST_LABEL: &str = "com.agentalign.magic";
 
 /// Get the path to the LaunchAgent plist.
-fn plist_path() -> PathBuf {
-    dirs::home_dir()
-        .expect("HOME must be set")
+fn plist_path() -> anyhow::Result<PathBuf> {
+    let home = dirs::home_dir().context("HOME environment variable must be set")?;
+    Ok(home
         .join("Library")
         .join("LaunchAgents")
-        .join(format!("{}.plist", PLIST_LABEL))
+        .join(format!("{}.plist", PLIST_LABEL)))
 }
 
 /// Get the path to the agentalign binary.
@@ -24,8 +26,25 @@ fn binary_path() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agentalign"))
 }
 
+/// Get the current user's GUI domain UID for launchctl bootstrap.
+fn gui_uid() -> String {
+    // On macOS, the GUI domain is gui/<uid> where uid is the user's numeric ID
+    let uid = unsafe { libc::getuid() };
+    format!("gui/{}", uid)
+}
+
+/// Escape a string for safe XML/plist embedding.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// Generate the LaunchAgent plist XML.
 fn generate_plist(binary: &std::path::Path) -> String {
+    let escaped_binary = xml_escape(&binary.display().to_string());
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -50,13 +69,13 @@ fn generate_plist(binary: &std::path::Path) -> String {
 </plist>
 "#,
         PLIST_LABEL,
-        binary.display()
+        escaped_binary
     )
 }
 
 /// Enable magic mode: install and start the LaunchAgent.
 pub fn enable() -> anyhow::Result<()> {
-    let plist = plist_path();
+    let plist = plist_path()?;
     let binary = binary_path();
 
     // Ensure LaunchAgents directory exists
@@ -68,17 +87,32 @@ pub fn enable() -> anyhow::Result<()> {
     let xml = generate_plist(&binary);
     fs::write(&plist, xml)?;
 
-    // Load with launchctl
+    // Try modern launchctl bootstrap first (macOS 13+), fall back to load
+    let domain = gui_uid();
     let output = Command::new("launchctl")
-        .args(["load", "-w", &plist.to_string_lossy()])
-        .output()?;
+        .args(["bootstrap", &domain, &plist.to_string_lossy()])
+        .output();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("launchctl load failed: {}", stderr);
+    match output {
+        Ok(o) if o.status.success() => {}
+        _ => {
+            // Fallback to legacy load
+            let output = Command::new("launchctl")
+                .args(["load", "-w", &plist.to_string_lossy()])
+                .output()
+                .context("Failed to run launchctl")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("launchctl load failed: {}", stderr);
+            }
+        }
     }
 
-    println!("Magic mode enabled. LaunchAgent installed at {}", plist.display());
+    println!(
+        "Magic mode enabled. LaunchAgent installed at {}",
+        plist.display()
+    );
     println!("Daemon will start automatically on login.");
     println!("Logs: /tmp/agentalign.log /tmp/agentalign.err");
 
@@ -87,17 +121,29 @@ pub fn enable() -> anyhow::Result<()> {
 
 /// Disable magic mode: unload and remove the LaunchAgent.
 pub fn disable() -> anyhow::Result<()> {
-    let plist = plist_path();
+    let plist = plist_path()?;
 
     if plist.exists() {
-        // Unload with launchctl
+        // Try modern bootout first, fall back to unload
+        let domain_target = format!("{}/{}", gui_uid(), PLIST_LABEL);
         let output = Command::new("launchctl")
-            .args(["unload", "-w", &plist.to_string_lossy()])
-            .output()?;
+            .args(["bootout", &domain_target])
+            .output();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("launchctl unload warning: {}", stderr);
+        match output {
+            Ok(o) if o.status.success() => {}
+            _ => {
+                // Fallback to legacy unload
+                let output = Command::new("launchctl")
+                    .args(["unload", "-w", &plist.to_string_lossy()])
+                    .output()
+                    .context("Failed to run launchctl")?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("launchctl unload warning: {}", stderr);
+                }
+            }
         }
 
         // Remove plist
@@ -112,7 +158,7 @@ pub fn disable() -> anyhow::Result<()> {
 
 /// Show magic mode status.
 pub fn status() -> anyhow::Result<()> {
-    let plist = plist_path();
+    let plist = plist_path()?;
 
     if !plist.exists() {
         println!("Magic mode: OFF");
@@ -127,7 +173,14 @@ pub fn status() -> anyhow::Result<()> {
 
     let loaded = output.status.success();
 
-    println!("Magic mode: {}", if loaded { "ON (running)" } else { "ON (not running)" });
+    println!(
+        "Magic mode: {}",
+        if loaded {
+            "ON (running)"
+        } else {
+            "ON (not running)"
+        }
+    );
     println!("LaunchAgent: {}", plist.display());
     println!("Binary: {}", binary_path().display());
     println!("Logs: /tmp/agentalign.log /tmp/agentalign.err");

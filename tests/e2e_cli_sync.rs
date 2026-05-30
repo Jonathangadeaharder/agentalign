@@ -45,9 +45,10 @@ fn test_agentalign_sync_no_canonical() {
         .env("HOME", sandbox.path())
         .assert();
 
+    // Sync without canonical config should fail with a helpful error
     assert
-        .success()
-        .stderr(predicate::str::contains("No canonical config found"));
+        .failure()
+        .stderr(predicate::str::contains("No canonical config"));
 }
 
 #[test]

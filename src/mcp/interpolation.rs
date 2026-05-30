@@ -65,7 +65,7 @@ fn dollar_brace_to_bare(input: &str) -> String {
 
             if has_default {
                 // skip default value
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     if ch == '}' {
                         break;
                     }

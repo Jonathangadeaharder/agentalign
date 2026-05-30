@@ -1,20 +1,11 @@
-//! Claude Desktop (and Cursor) MCP format strategy.
+//! Antigravity MCP format strategy.
 //!
-//! Format (JSON):
-//! ```json
-//! {
-//!   "mcpServers": {
-//!     "server_name": {
-//!       "command": "npx",
-//!       "args": ["@browsermcp/mcp"],
-//!       "url": "https://..."
-//!     }
-//!   }
-//! }
-//! ```
-//!
-//! Remote servers use a bare `url` field (no explicit transport type).
-//! `env` section is **not** supported by Claude Desktop (returns empty).
+//! Antigravity is a VS Code fork that uses the SAME MCP config format as
+//! Cursor (mcpServers root key, command+args split), but with these differences:
+//! - Config path: ~/.gemini/antigravity/mcp_config.json
+//! - Supports `env` section (unlike Claude Desktop which strips it)
+//! - No `/` or `\` restriction in server IDs (unlike Cursor which forbids them)
+//! - Placeholder style: PlaceholderStyle::DollarBrace (same as Cursor)
 
 use crate::shared::error::{AdapterError, Result};
 use crate::shared::models::{CanonicalWorkspaceState, ClientCapabilities};
@@ -23,19 +14,11 @@ use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Default)]
-pub struct ClaudeStrategy {
-    /// Whether this is Cursor (which has `/` and `\` restrictions).
-    pub is_cursor: bool,
-}
+pub struct AntigravityStrategy;
 
-impl ConfigurationAdapter for ClaudeStrategy {
+impl ConfigurationAdapter for AntigravityStrategy {
     fn target_name(&self) -> &'static str {
-        if self.is_cursor {
-            "cursor"
-        } else {
-            "claude"
-        }
+        "antigravity"
     }
 
     fn deserialize_to_canonical(&self, raw: &str, _base_path: &Path) -> Result<JsonValue> {
@@ -44,9 +27,7 @@ impl ConfigurationAdapter for ClaudeStrategy {
         let servers = raw_val
             .get("mcpServers")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| {
-                AdapterError::Other("Missing 'mcpServers' key in config".into())
-            })?;
+            .ok_or_else(|| AdapterError::Other("Missing 'mcpServers' key in config".into()))?;
 
         let mut canonical_servers = serde_json::Map::new();
 
@@ -59,18 +40,12 @@ impl ConfigurationAdapter for ClaudeStrategy {
 
             // Determine transport type
             if entry_obj.contains_key("url") {
-                server.insert(
-                    "type".into(),
-                    json!("remote"),
-                );
+                server.insert("type".into(), json!("remote"));
                 if let Some(url) = entry_obj.get("url") {
                     server.insert("url".into(), url.clone());
                 }
             } else {
-                server.insert(
-                    "type".into(),
-                    json!("local"),
-                );
+                server.insert("type".into(), json!("local"));
             }
 
             // Split command/args back into command array
@@ -137,8 +112,8 @@ impl ConfigurationAdapter for ClaudeStrategy {
                     if let Some(first) = cmd_arr.first().and_then(|v| v.as_str()) {
                         agent_entry.insert("command".into(), json!(first));
                         if cmd_arr.len() > 1 {
-                            let args: Vec<JsonValue> = cmd_arr[1..]
-                                .to_vec();
+                            let args: Vec<JsonValue> =
+                                cmd_arr[1..].to_vec();
                             agent_entry.insert("args".into(), JsonValue::Array(args));
                         }
                     }
@@ -157,25 +132,20 @@ impl ConfigurationAdapter for ClaudeStrategy {
         }
 
         let mut root = serde_json::Map::new();
-        root.insert(
-            "mcpServers".into(),
-            JsonValue::Object(servers),
-        );
+        root.insert("mcpServers".into(), JsonValue::Object(servers));
         Ok(serde_json::to_string_pretty(&JsonValue::Object(root))?)
     }
 
     fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
-        if self.is_cursor {
-            base_path.join(".cursor").join("mcp.json")
-        } else {
-            base_path.join(".claude").join(".mcp.json")
-        }
+        base_path
+            .join(".gemini")
+            .join("antigravity")
+            .join("mcp_config.json")
     }
 
-    fn normalize_env(&self, _env: &HashMap<String, String>) -> HashMap<String, String> {
-        // Claude Desktop does not support env section — return empty
-        // Callers should warn/prevent sync of env vars to Claude.
-        HashMap::new()
+    fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {
+        // Antigravity supports env section — pass through
+        env.clone()
     }
 
     fn extract_unknowns(&self, raw: &JsonValue) -> HashMap<String, JsonValue> {
@@ -200,32 +170,18 @@ impl ConfigurationAdapter for ClaudeStrategy {
     }
 }
 
-impl McpFormatStrategy for ClaudeStrategy {
-    fn validate(&self, state: &CanonicalWorkspaceState) -> Result<()> {
-        if self.is_cursor {
-            let forbidden = ['/', '\\'];
-            for name in state.mcp.keys() {
-                if name.chars().any(|c| forbidden.contains(&c)) {
-                    return Err(AdapterError::Validation(format!(
-                        "Cursor server ID '{}' contains forbidden character",
-                        name
-                    )));
-                }
-            }
-        }
+impl McpFormatStrategy for AntigravityStrategy {
+    fn validate(&self, _state: &CanonicalWorkspaceState) -> Result<()> {
+        // Antigravity has no ID character restrictions
         Ok(())
     }
 
     fn capabilities(&self) -> ClientCapabilities {
-        if self.is_cursor {
-            crate::mcp::capabilities::cursor_capabilities()
-        } else {
-            crate::mcp::capabilities::claude_capabilities()
-        }
+        crate::mcp::capabilities::antigravity_capabilities()
     }
 
     fn stdio_bridge_command(&self, _url: &str) -> Option<Vec<String>> {
-        // Claude and Cursor support SSE natively, no bridge needed
+        // Antigravity supports SSE natively, no bridge needed
         None
     }
 }

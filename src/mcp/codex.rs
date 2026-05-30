@@ -200,7 +200,7 @@ impl ConfigurationAdapter for CodexStrategy {
         env.clone()
     }
 
-    fn extract_unknowns(&self, raw: &JsonValue) -> HashMap<String, JsonValue> {
+    fn extract_unknowns(&self, _raw: &JsonValue) -> HashMap<String, JsonValue> {
         // TOML extras are handled differently — during parse we
         // already capture them in the extra fields per server.
         HashMap::new()

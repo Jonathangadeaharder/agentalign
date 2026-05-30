@@ -129,7 +129,7 @@ pub fn get_latest_transaction(agent: &str) -> Result<Option<SyncTransaction>> {
     all.retain(|tx| {
         matches!(tx.status, TransactionStatus::Pending | TransactionStatus::Committed)
     });
-    all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    all.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     Ok(all.into_iter().next())
 }
 
@@ -137,14 +137,14 @@ pub fn get_latest_transaction(agent: &str) -> Result<Option<SyncTransaction>> {
 pub fn get_transaction_history(agent: &str) -> Result<Vec<SyncTransaction>> {
     let mut all = cache::load_cache()?;
     all.retain(|tx| tx.agent == agent);
-    all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    all.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     Ok(all)
 }
 
 /// Get all transactions (across all agents), newest first.
 pub fn get_all_transactions() -> Result<Vec<SyncTransaction>> {
     let mut all = cache::load_cache()?;
-    all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    all.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     Ok(all)
 }
 
@@ -161,7 +161,7 @@ pub fn handle_rollback(agent: Option<&str>) -> Result<usize> {
         });
         // Group by agent, take latest per agent
         let mut seen = std::collections::HashSet::new();
-        all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        all.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         all.into_iter()
             .filter(|tx| {
                 if seen.contains(&tx.agent) {
