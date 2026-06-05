@@ -21,7 +21,7 @@ Rust CLI for MCP config unification across AI coding agents.
 - **watch.rs** — File watcher daemon using `notify` crate. 500ms debounce. Bidirectional logic: canonical changed → regenerate all agents; agent config changed → compute delta → update canonical → propagate.
 - **magic.rs** — LaunchAgent management. Installs/removes `com.agentalign.magic.plist` at `~/Library/LaunchAgents/`. Runs `agentalign watch` at login with KeepAlive.
 - **state.rs** — Sync state tracking. Stores SHA-256 hashes in `~/.agents/.sync_state.json` to distinguish own writes from user edits (loop prevention).
-- **shared/** — Core types (`CanonicalWorkspaceState`, `McpServerDefinition`, `SyncTransaction`, `ClientCapabilities`, etc.), traits (`ConfigurationAdapter`, `McpFormatStrategy`, `TrimAnalyzer`), and error types (`AdapterError`, `TrimError`).
+- **shared/** — Core types (`CanonicalWorkspaceState`, `McpServerDefinition`, `SyncTransaction`, `ClientCapabilities`, etc.), traits (`ConfigurationAdapter`, `McpFormatStrategy`), and error types (`AdapterError`).
 
 ## Test Count
 
@@ -42,9 +42,9 @@ Rust CLI for MCP config unification across AI coding agents.
 - `src/watch.rs` — `run_daemon()`. Bidirectional sync with `process_changes()`, `sync_all_agents()`, `sync_selected_agents()`.
 - `src/magic.rs` — `enable()`, `disable()`, `status()`. LaunchAgent plist generation + launchctl bootstrap.
 - `src/state.rs` — `SyncState` struct. `compute_hash()`, `is_unchanged()`, `update_hash()`.
-- `src/shared/models.rs` — `CanonicalWorkspaceState`, `McpServerDefinition`, `TransportType`, `SyncTransaction`, `TransactionStatus`, `ClientCapabilities`, `PlaceholderStyle`, `UsageEntry`, `UnusedReport`, `SecretMapping`, `EnvironmentMapping`.
-- `src/shared/traits.rs` — `ConfigurationAdapter`, `McpFormatStrategy`, `TrimAnalyzer`.
-- `src/shared/error.rs` — `AdapterError`, `TrimError`.
+- `src/shared/models.rs` — `CanonicalWorkspaceState`, `McpServerDefinition`, `TransportType`, `SyncTransaction`, `TransactionStatus`, `ClientCapabilities`, `PlaceholderStyle`, `SecretMapping`, `EnvironmentMapping`.
+- `src/shared/traits.rs` — `ConfigurationAdapter`, `McpFormatStrategy`.
+- `src/shared/error.rs` — `AdapterError`.
 - `src/mcp/validation.rs` — `check_forbidden_chars()`, `check_max_id_length()`, `check_stdio_paths()`, `check_remote_urls()`, `check_transport_support()`, `check_toml_key_safety()`.
 - `src/mcp/interpolation.rs` — `normalize_value()`, `normalize_env_map()`, `extract_placeholders()`, `resolve_placeholders()`, `build_secret_map()`.
 - `src/mcp/capabilities.rs` — Per-agent `ClientCapabilities` constructors.

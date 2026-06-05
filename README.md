@@ -16,7 +16,7 @@ cargo clippy -- -D warnings
 
 ## CLI Commands
 
-```
+```text
 agentalign migrate [--dry-run]              # Scan existing agent configs into ~/.agents/
 agentalign sync [--dry-run]                 # Push canonical config to all agents
 agentalign add <name>                       # Add MCP server to canonical and propagate
@@ -65,7 +65,7 @@ agentalign watch                            # Run the file watcher daemon
 
 ## Structure
 
-```
+```text
 src/
 ├── main.rs              # CLI entrypoint (clap derive)
 ├── lib.rs               # Module declarations
@@ -108,6 +108,6 @@ src/
 └── shared/
     ├── mod.rs
     ├── models.rs        # CanonicalWorkspaceState, McpServerDefinition, SyncTransaction, etc.
-    ├── traits.rs        # ConfigurationAdapter, McpFormatStrategy, TrimAnalyzer traits
-    └── error.rs         # AdapterError, TrimError enums
+    ├── traits.rs        # ConfigurationAdapter, McpFormatStrategy traits
+    └── error.rs         # AdapterError enum
 ```
