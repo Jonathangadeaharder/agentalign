@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod instructions;
 pub mod mcp;
 pub mod magic;
