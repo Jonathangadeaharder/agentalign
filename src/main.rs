@@ -28,6 +28,11 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Manage canonical subagent definitions
+    Agents {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
     /// Add an MCP server to canonical config and propagate
     Add {
         /// Server name
@@ -91,6 +96,18 @@ enum Commands {
     },
     /// Run the file watcher daemon (used by LaunchAgent)
     Watch,
+}
+
+#[derive(Subcommand)]
+enum AgentAction {
+    /// List canonical subagent definitions
+    List,
+    /// Sync subagent definitions to all tools
+    Sync {
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -189,6 +206,18 @@ fn push_to_agents(
         }
         Err(e) => {
             eprintln!("  skills symlink error: {}", e);
+        }
+    }
+
+    // Sync subagent definitions
+    match agentalign::agents::sync_agents(home, false) {
+        Ok(count) => {
+            if count > 0 {
+                println!("  agents synced: {}", count);
+            }
+        }
+        Err(e) => {
+            eprintln!("  agent sync error: {}", e);
         }
     }
 
@@ -297,12 +326,39 @@ fn run() -> Result<()> {
             if dry_run {
                 println!("[DRY RUN] Would push canonical config to all configured agents.");
                 println!("  Servers in canonical: {}", canonical.mcp.len());
+                agentalign::agents::sync_agents(&home, true)?;
                 return Ok(());
             }
 
             push_to_agents(&canonical, &home)?;
             println!("Sync complete.");
         }
+
+        Commands::Agents { action } => match action {
+            AgentAction::List => {
+                let agents = agentalign::agents::canonical::load_all_agents(&home)?;
+                if agents.is_empty() {
+                    println!("No canonical agents found in ~/.agents/agents/");
+                } else {
+                    for agent in &agents {
+                        println!(
+                            "  {} — {} (model: {})",
+                            agent.name,
+                            agent.frontmatter.description,
+                            agent.frontmatter.model.as_deref().unwrap_or("default")
+                        );
+                    }
+                }
+            }
+            AgentAction::Sync { dry_run } => {
+                let count = agentalign::agents::sync_agents(&home, dry_run)?;
+                if dry_run {
+                    println!("[DRY RUN] Would sync agents to all tools.");
+                } else {
+                    println!("Agents synced: {}", count);
+                }
+            }
+        },
 
         Commands::Add {
             name,
