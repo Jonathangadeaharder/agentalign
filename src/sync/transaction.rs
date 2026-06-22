@@ -34,7 +34,8 @@ pub fn create_transaction(agent: &str, target_path: &Path) -> Result<SyncTransac
     let home = dirs::home_dir().context("Cannot find home directory")?;
     let backup_dir = home.join(".agents").join("backups");
     fs::create_dir_all(&backup_dir).context("Failed to create backup directory")?;
-    let backup_filename = format!("{}_{}.bak", agent, timestamp);
+    // Use the transaction UUID in the backup filename to guarantee uniqueness.
+    let backup_filename = format!("{}_{}.bak", agent, id);
     let backup_path = backup_dir.join(&backup_filename);
 
     // Write backup of original file (only if it existed)

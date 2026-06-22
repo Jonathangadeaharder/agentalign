@@ -1,4 +1,5 @@
 use agentalign::mcp::factory::{AgentRegistry, McpFormatFactory};
+use agentalign::shared::config;
 use agentalign::shared::models::{CanonicalWorkspaceState, McpServerDefinition, TransportType};
 use agentalign::sync::transaction;
 use anyhow::{Context, Result};
@@ -120,33 +121,146 @@ enum MagicAction {
     Status,
 }
 
+/// Re-merge local-entry servers from the existing agent config file after
+/// serialization. This prevents sync from removing agent-local servers that
+/// are not in canonical but are in local_entries.json.
+///
+/// Handles both JSON (mcp/mcpServers keys) and TOML (Codex) configs.
+fn preserve_local_entries(
+    output: &str,
+    target_path: &Path,
+    local_entries: &std::collections::HashSet<String>,
+) -> String {
+    if local_entries.is_empty() || !target_path.exists() {
+        return output.to_string();
+    }
+
+    let extension = target_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    match extension {
+        "toml" => preserve_local_entries_toml(output, target_path, local_entries),
+        _ => preserve_local_entries_json(output, target_path, local_entries),
+    }
+}
+
+/// Preserve local entries for JSON configs (Claude, Cursor, Gemini, OpenCode, Antigravity).
+fn preserve_local_entries_json(
+    output: &str,
+    target_path: &Path,
+    local_entries: &std::collections::HashSet<String>,
+) -> String {
+    let existing: serde_json::Value = match fs::read_to_string(target_path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::json!({})),
+        Err(_) => return output.to_string(),
+    };
+
+    let mut new_doc: serde_json::Value =
+        serde_json::from_str(output).unwrap_or(serde_json::json!({}));
+
+    // Try both "mcp" and "mcpServers" keys
+    for key in &["mcp", "mcpServers"] {
+        if let Some(existing_servers) = existing.get(key).and_then(|v| v.as_object()) {
+            if let Some(new_servers) = new_doc.get_mut(key).and_then(|v| v.as_object_mut()) {
+                for (name, value) in existing_servers {
+                    if local_entries.contains(name) && !new_servers.contains_key(name) {
+                        new_servers.insert(name.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::to_string_pretty(&new_doc).unwrap_or_else(|_| output.to_string())
+}
+
+/// Preserve local entries for TOML configs (Codex).
+/// Parses the existing TOML, extracts local-entry servers from the [mcp] table,
+/// and re-merges them into the serialized output.
+fn preserve_local_entries_toml(
+    output: &str,
+    target_path: &Path,
+    local_entries: &std::collections::HashSet<String>,
+) -> String {
+    let existing_raw = match fs::read_to_string(target_path) {
+        Ok(raw) => raw,
+        Err(_) => return output.to_string(),
+    };
+
+    let existing_doc: toml_edit::DocumentMut = existing_raw.parse().unwrap_or_default();
+
+    let mut output_doc: toml_edit::DocumentMut = output.parse().unwrap_or_else(|_| toml_edit::DocumentMut::new());
+
+    // Find the [mcp] table in existing, re-merge local entries into output
+    if let Some(existing_mcp) = existing_doc.get("mcp").and_then(|v| v.as_table()) {
+        if let Some(output_mcp) = output_doc.get_mut("mcp").and_then(|v| v.as_table_mut()) {
+            for (name, value) in existing_mcp {
+                if local_entries.contains(name) && !output_mcp.contains_key(name) {
+                    output_mcp.insert(name, value.clone());
+                }
+            }
+        }
+    }
+
+    output_doc.to_string()
+}
+
 /// Push canonical config to all synced agents with transaction tracking.
 ///
 /// Single shared implementation used by `sync`, `add`, and `remove` commands.
-fn push_to_agents(
+/// Applies agent_skip filtering and preserves local entries.
+fn push_to_agents(canonical: &CanonicalWorkspaceState, home: &Path) -> Result<()> {
+    push_to_agents_impl(canonical, home, false)
+}
+
+/// Push canonical config to all synced agents with dry-run support.
+fn push_to_agents_impl(
     canonical: &CanonicalWorkspaceState,
     home: &Path,
+    dry_run: bool,
 ) -> Result<()> {
     let agents = AgentRegistry::synced_agents(home);
-    let state_json = serde_json::to_value(canonical)
-        .context("Failed to serialize canonical state")?;
+    let agents_dir = home.join(".agents");
+    let local_entries = config::load_local_entries(&agents_dir)?;
+    let skip_map = config::load_agent_skip(&agents_dir)?;
 
     for descriptor in &agents {
+        // Filter out skipped servers for this agent
+        let filtered = config::filter_skipped(&canonical.mcp, descriptor.label, &skip_map);
+        let filtered_canonical = CanonicalWorkspaceState { mcp: filtered };
         let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
         let target_path = &descriptor.config_path;
 
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).ok();
-        }
-
         // Validate before writing
-        if let Err(e) = strategy.validate(canonical) {
+        if let Err(e) = strategy.validate(&filtered_canonical) {
             eprintln!("  {} validation error: {}", descriptor.label, e);
             continue;
         }
 
+        let state_json = serde_json::to_value(&filtered_canonical)
+            .context("Failed to serialize canonical state")?;
+
         match strategy.serialize_from_canonical(&state_json, home) {
             Ok(output) => {
+                // Dry-run: preview only, no filesystem mutations
+                if dry_run {
+                    println!(
+                        "  {} -> {} ({} servers) [DRY RUN]",
+                        descriptor.label,
+                        target_path.display(),
+                        filtered_canonical.mcp.len()
+                    );
+                    continue;
+                }
+
+                // Create parent dirs (not in dry-run)
+                if let Some(parent) = target_path.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("Failed to create dir for {}", descriptor.label))?;
+                }
+
+                // Preserve local entries from existing file
+                let output = preserve_local_entries(&output, target_path, &local_entries);
+
                 // Non-destructive: skip if content unchanged
                 if target_path.exists() {
                     if let Ok(existing) = fs::read_to_string(target_path) {
@@ -166,12 +280,14 @@ fn push_to_agents(
                     Ok(tx) => {
                         fs::write(target_path, &output)
                             .with_context(|| format!("Failed to write {}", target_path.display()))?;
-                        transaction::finalize_transaction(&tx, output.as_bytes()).ok();
+                        if let Err(e) = transaction::finalize_transaction(&tx, output.as_bytes()) {
+                            eprintln!("  {} tx finalize error: {}", descriptor.label, e);
+                        }
                         println!(
                             "  {} -> {} ({} servers)",
                             descriptor.label,
                             target_path.display(),
-                            canonical.mcp.len()
+                            filtered_canonical.mcp.len()
                         );
                     }
                     Err(e) => {
@@ -185,32 +301,34 @@ fn push_to_agents(
         }
     }
 
-    // Heal instruction file symlinks
-    match agentalign::instructions::heal_all(home) {
-        Ok(fixed) => {
-            if fixed > 0 {
-                println!("  instruction symlinks healed: {}", fixed);
+    // Heal instruction file symlinks (skip in dry-run)
+    if !dry_run {
+        match agentalign::instructions::heal_all(home) {
+            Ok(fixed) => {
+                if fixed > 0 {
+                    println!("  instruction symlinks healed: {}", fixed);
+                }
+            }
+            Err(e) => {
+                eprintln!("  instruction symlink error: {}", e);
             }
         }
-        Err(e) => {
-            eprintln!("  instruction symlink error: {}", e);
-        }
-    }
 
-    // Heal skills symlinks
-    match agentalign::skills::heal_all(home) {
-        Ok(fixed) => {
-            if fixed > 0 {
-                println!("  skills symlinks healed: {}", fixed);
+        // Heal skills symlinks
+        match agentalign::skills::heal_all(home) {
+            Ok(fixed) => {
+                if fixed > 0 {
+                    println!("  skills symlinks healed: {}", fixed);
+                }
             }
-        }
-        Err(e) => {
-            eprintln!("  skills symlink error: {}", e);
+            Err(e) => {
+                eprintln!("  skills symlink error: {}", e);
+            }
         }
     }
 
     // Sync subagent definitions
-    match agentalign::agents::sync_agents(home, false) {
+    match agentalign::agents::sync_agents(home, dry_run) {
         Ok(count) => {
             if count > 0 {
                 println!("  agents synced: {}", count);
@@ -326,7 +444,7 @@ fn run() -> Result<()> {
             if dry_run {
                 println!("[DRY RUN] Would push canonical config to all configured agents.");
                 println!("  Servers in canonical: {}", canonical.mcp.len());
-                agentalign::agents::sync_agents(&home, true)?;
+                push_to_agents_impl(&canonical, &home, true)?;
                 return Ok(());
             }
 

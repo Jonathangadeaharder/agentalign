@@ -13,6 +13,7 @@ Rust CLI for MCP config unification across AI coding agents.
 ### Modules
 
 - **mcp/** — 10 strategy modules for Claude, Cursor, VS Code, Copilot, Windsurf, Zed, Gemini, Codex, OpenCode, Antigravity. Factory pattern via `McpFormatFactory::from_agent(AgentType)`. Single source of truth: `AgentRegistry::synced_agents()`.
+- **agents/** — Subagent definition sync. Canonical: `~/.agents/agents/*.md`. 4 strategies: Claude, OpenCode, Gemini (Agy customAgent JSON), Codex (openai.yaml). `SubagentRegistry::synced_strategies()` returns the 4 synced strategies (Antigravity not yet supported).
 - **sync/** — Transactional writes (`transaction.rs`) with TOML cache (`cache.rs`) + SHA-256 checksum verification + rollback. Delta merger (`delta_merger.rs`) for bidirectional add/update/remove detection with local entries protection.
 - **migration/** — Secret splitting (`secret_splitter.rs`): extracts sensitive fields → `${ENV_AGENTALIGN_SECRET_*}` placeholders. Local JSON fallback store (`local_json.rs`) at `~/.agents/local.json`.
 - **tracking/** — `SecretVault` trait (`OsKeyringVault` via keyring crate / `InMemoryVault` for tests). Keychain bindings in `keychain.rs`.
@@ -25,12 +26,14 @@ Rust CLI for MCP config unification across AI coding agents.
 
 ## Test Count
 
-88 unit tests + 5 E2E tests = 93 total.
+107 unit tests + 5 E2E tests = 112 total.
 
 ## Key Files
 
-- `src/main.rs` — CLI: `migrate`, `sync`, `add`, `remove`, `restore`, `magic`, `watch`.
+- `src/main.rs` — CLI: `migrate`, `sync`, `agents list`, `agents sync`, `add`, `remove`, `restore`, `magic`, `watch`.
 - `src/mcp/factory.rs` — `AgentRegistry` (synced agents list) + `McpFormatFactory` (strategy factory). 10 agent types.
+- `src/agents/mod.rs` — `SubagentRegistry`, `sync_agents()`. 4 synced strategies (Claude, OpenCode, Gemini, Codex).
+- `src/agents/canonical.rs` — `load_all_agents()`, parses YAML frontmatter from `~/.agents/agents/*.md`.
 - `src/sync/transaction.rs` — `create_transaction()`, `finalize_transaction()`, `rollback_transaction()`, `handle_rollback()`, `handle_list()`.
 - `src/sync/cache.rs` — TOML-based transaction cache at `~/.agents/cache.toml`.
 - `src/sync/delta_merger.rs` — `compute_delta()` with local entries protection set.

@@ -19,6 +19,8 @@ cargo clippy -- -D warnings
 ```text
 agentalign migrate [--dry-run]              # Scan existing agent configs into ~/.agents/
 agentalign sync [--dry-run]                 # Push canonical config to all agents
+agentalign agents list                      # List canonical subagent definitions
+agentalign agents sync [--dry-run]          # Sync subagent definitions to all tools
 agentalign add <name>                       # Add MCP server to canonical and propagate
   --type <local|remote>  (default: local)
   --command <cmd>        (for local servers, e.g. "npx @pkg/mcp")
@@ -62,6 +64,7 @@ agentalign watch                            # Run the file watcher daemon
 - **Skills directory syncing** — `~/.agents/skills/` is the canonical source; per-agent skill dirs are symlinked.
 - **Magic mode** — installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
 - **Local entries protection** — `~/.agents/local_entries.json` preserves user-added keys during sync.
+- **Per-agent skip list** — `~/.agents/agent_skip.json` prevents specific servers from being pushed to specific agents.
 
 ## Structure
 
@@ -72,6 +75,13 @@ src/
 ├── state.rs             # Sync state tracking (SHA-256 hashes, loop prevention)
 ├── magic.rs             # LaunchAgent install/uninstall/status
 ├── watch.rs             # File watcher daemon (notify crate, bidirectional sync)
+├── agents/              # Subagent definition sync (canonical → per-agent formats)
+│   ├── mod.rs           # SubagentRegistry, sync_agents()
+│   ├── canonical.rs     # Load/parse canonical agent definitions (~/.agents/agents/*.md)
+│   ├── claude.rs        # ClaudeAgentStrategy: markdown with YAML frontmatter
+│   ├── codex.rs         # CodexAgentStrategy: openai.yaml inside skill dirs
+│   ├── gemini.rs        # GeminiAgentStrategy: Agy customAgent JSON format
+│   └── opencode.rs      # OpenCodeAgentStrategy: same format as Claude
 ├── instructions/
 │   └── mod.rs           # Instruction symlink healing (AGENTS.md → CLAUDE.md, etc.)
 ├── mcp/
@@ -107,6 +117,7 @@ src/
 │   └── keychain.rs      # OS keychain bindings (keyring crate)
 └── shared/
     ├── mod.rs
+    ├── config.rs        # Shared config loaders (local_entries, agent_skip)
     ├── models.rs        # CanonicalWorkspaceState, McpServerDefinition, SyncTransaction, etc.
     ├── traits.rs        # ConfigurationAdapter, McpFormatStrategy traits
     └── error.rs         # AdapterError enum

@@ -29,6 +29,9 @@ fn binary_path() -> PathBuf {
 /// Get the current user's GUI domain UID for launchctl bootstrap.
 fn gui_uid() -> String {
     // On macOS, the GUI domain is gui/<uid> where uid is the user's numeric ID
+    // SAFETY: `getuid()` is a POSIX function that always returns the real user ID
+    // of the calling process. It performs no memory operations, has no preconditions,
+    // and cannot fail. The call is thread-safe and has no side effects.
     let uid = unsafe { libc::getuid() };
     format!("gui/{}", uid)
 }

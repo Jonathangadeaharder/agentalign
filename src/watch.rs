@@ -11,6 +11,7 @@
 
 use crate::instructions;
 use crate::mcp::factory::{AgentRegistry, AgentType, McpFormatFactory};
+use crate::shared::config;
 use crate::shared::models::CanonicalWorkspaceState;
 use crate::skills;
 use crate::state::SyncState;
@@ -33,9 +34,13 @@ const INSTRUCTION_PREFIX: &str = "instr-";
 /// IDs for skills directory watch entries.
 const SKILLS_PREFIX: &str = "skills-";
 
-/// File path for the local entries protection list.
-/// Keys listed here are preserved even if absent from canonical.
-const LOCAL_ENTRIES_FILE: &str = "local_entries.json";
+/// Load the local entries protection set from ~/.agents/local_entries.json.
+fn load_local_entries(agents_dir: &Path) -> HashSet<String> {
+    config::load_local_entries(agents_dir).unwrap_or_else(|e| {
+        eprintln!("[watch] failed to load local_entries.json: {}", e);
+        HashSet::new()
+    })
+}
 
 /// Watcher entry: maps a file path to its agent identifier.
 struct WatchEntry {
@@ -101,17 +106,6 @@ fn build_watch_list(home: &Path) -> Vec<WatchEntry> {
     }
 
     entries
-}
-
-/// Load the local entries protection set from ~/.agents/local_entries.json.
-fn load_local_entries(agents_dir: &Path) -> HashSet<String> {
-    let path = agents_dir.join(LOCAL_ENTRIES_FILE);
-    if path.exists() {
-        let raw = std::fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&raw).unwrap_or_default()
-    } else {
-        HashSet::new()
-    }
 }
 
 /// Run the file watcher daemon. Blocks until interrupted.
@@ -396,6 +390,34 @@ fn process_changes(
                     }
 
                     for key in &delta.entries_to_update {
+                        // Guard: prevent lossy format-conversion round-trips.
+                        // When the watcher reverse-merges an agent config back to canonical,
+                        // the agent's serialized form may have lost fields (e.g., OpenCode
+                        // splits canonical command:["npx","-y","pkg"] into command:"npx" + args:["-y","pkg"]).
+                        // Skip the update only when canonical has richer data (command/url)
+                        // AND the incoming agent entry is missing that data — meaning the
+                        // agent's format conversion stripped it. This allows legitimate
+                        // user edits (e.g. changing a URL) to propagate to canonical.
+                        if let Some(existing) = canonical.mcp.get(key) {
+                            let canonical_has_data = existing.command.is_some() || existing.url.is_some();
+                            if canonical_has_data {
+                                // Check if the incoming agent entry is lossy
+                                let agent_has_data = agent_servers
+                                    .get(key)
+                                    .and_then(|v| v.as_object())
+                                    .map(|obj| {
+                                        obj.contains_key("command")
+                                            || obj.contains_key("url")
+                                            || obj.contains_key("args")
+                                    })
+                                    .unwrap_or(false);
+
+                                if !agent_has_data {
+                                    eprintln!("  ~ {} (skipped — agent entry is lossy)", key);
+                                    continue;
+                                }
+                            }
+                        }
                         if let Some(v) = agent_servers.get(key) {
                             let def = serde_json::from_value(v.clone()).unwrap_or_else(|_| {
                                 crate::shared::models::McpServerDefinition {
@@ -437,35 +459,41 @@ fn process_changes(
 /// Sync all agents from canonical with transaction tracking.
 fn sync_all_agents(
     home: &Path,
-    _agents_dir: &Path,
+    agents_dir: &Path,
     canonical: &CanonicalWorkspaceState,
     state: &mut SyncState,
 ) -> anyhow::Result<()> {
     let descriptors = AgentRegistry::synced_agents(home);
-    let state_json = serde_json::to_value(canonical)?;
+    let skip_map = config::load_agent_skip(agents_dir).unwrap_or_else(|e| {
+        eprintln!("[watch] failed to load agent_skip.json: {}", e);
+        std::collections::HashMap::new()
+    });
 
     for descriptor in &descriptors {
+        let filtered_mcp = config::filter_skipped(&canonical.mcp, descriptor.label, &skip_map);
+        let filtered = CanonicalWorkspaceState { mcp: filtered_mcp };
+        let state_json = serde_json::to_value(&filtered)?;
         let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
         let target_path = &descriptor.config_path;
         let id = descriptor.agent_type.as_str();
 
         if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).with_context(|| format!("Failed to create dir for {}", id))?;
         }
 
         match strategy.serialize_from_canonical(&state_json, home) {
             Ok(output) => {
                 if should_write(target_path, &output) {
-                    // Transaction-wrapped write
                     match transaction::create_transaction(id, target_path) {
                         Ok(tx) => {
                             std::fs::write(target_path, &output)?;
-                            transaction::finalize_transaction(&tx, output.as_bytes()).ok();
+                            if let Err(e) = transaction::finalize_transaction(&tx, output.as_bytes()) {
+                                eprintln!("  {} tx finalize error: {}", id, e);
+                            }
                             eprintln!("  {} -> {}", id, target_path.display());
                         }
                         Err(e) => {
                             eprintln!("  {} tx error: {}", id, e);
-                            // Still write without transaction as fallback
                             std::fs::write(target_path, &output)?;
                             eprintln!("  {} -> {} (no tx)", id, target_path.display());
                         }
@@ -491,13 +519,16 @@ fn sync_all_agents(
 /// Sync agents except those in the skip set, with transaction tracking.
 fn sync_selected_agents(
     home: &Path,
-    _agents_dir: &Path,
+    agents_dir: &Path,
     canonical: &CanonicalWorkspaceState,
     state: &mut SyncState,
     skip: &HashSet<String>,
 ) -> anyhow::Result<()> {
     let descriptors = AgentRegistry::synced_agents(home);
-    let state_json = serde_json::to_value(canonical)?;
+    let skip_map = config::load_agent_skip(agents_dir).unwrap_or_else(|e| {
+        eprintln!("[watch] failed to load agent_skip.json: {}", e);
+        std::collections::HashMap::new()
+    });
 
     for descriptor in &descriptors {
         let id = descriptor.agent_type.as_str();
@@ -506,11 +537,14 @@ fn sync_selected_agents(
             continue;
         }
 
+        let filtered_mcp = config::filter_skipped(&canonical.mcp, descriptor.label, &skip_map);
+        let filtered = CanonicalWorkspaceState { mcp: filtered_mcp };
+        let state_json = serde_json::to_value(&filtered)?;
         let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
         let target_path = &descriptor.config_path;
 
         if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).with_context(|| format!("Failed to create dir for {}", id))?;
         }
 
         match strategy.serialize_from_canonical(&state_json, home) {
@@ -519,7 +553,9 @@ fn sync_selected_agents(
                     match transaction::create_transaction(id, target_path) {
                         Ok(tx) => {
                             std::fs::write(target_path, &output)?;
-                            transaction::finalize_transaction(&tx, output.as_bytes()).ok();
+                            if let Err(e) = transaction::finalize_transaction(&tx, output.as_bytes()) {
+                                eprintln!("  {} tx finalize error: {}", id, e);
+                            }
                             eprintln!("  {} -> {}", id, target_path.display());
                         }
                         Err(e) => {

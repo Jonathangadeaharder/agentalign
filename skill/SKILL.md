@@ -142,7 +142,7 @@ All four original bugs have been fixed:
 - **P4 FIXED**: Deleted agent configs are now detected and recreated from canonical instead of silently skipped.
 
 ## Remaining Issues
-- **Backup filename collision.** Backups use `{Agent}_{timestamp}.bak`. Two syncs in the same second overwrite the same backup.
+(none currently)
 
 ## References
 
@@ -224,6 +224,5 @@ Key: `command` is always an array (unlike Claude's `command`+`args` split). `typ
 - **Sync is full-replace on `mcp` section, but `preserve_local_entries()` rescues local servers.** `agentalign sync` replaces the entire `mcp`/`mcpServers` section. Agent-specific keys not in canonical are lost unless: (1) they're in `local_entries.json` AND (2) `preserve_local_entries()` re-merges them from the existing file after `serialize_from_canonical()` produces output. The function tries both `"mcpServers"` and `"mcp"` keys to handle all agent formats.
 - **Sync preserves non-MCP sections but cannot recover lost data.** `serialize_from_canonical()` reads the existing agent config and only replaces the `mcp`/`mcpServers` key — other sections (`agent`, `provider`, `model`, etc.) are preserved. But if the canonical was previously corrupted (e.g., by watcher reverse-merge) and sync already wrote a stripped version, the non-MCP sections in the agent config are already gone. **Always verify agent configs after a sync that follows a watcher bug.** Keep backups (`.bak` files) for recovery.
 - **Transaction `checksum_after` is empty.** In `cache.toml`, many transactions have `checksum_after = ""` and `status = "pending"` — `finalize_transaction` isn't always called. Rollback may fail if the backup checksum doesn't match.
-- **Backup filename collision.** Backups use `{Agent}_{timestamp}.bak`. Two syncs in the same second overwrite the same backup.
 - **Rust duplicate impl blocks.** When adding a trait method to an existing `impl Trait for Type`, merge into the existing block. Separate `impl` blocks for the same trait+type cause `E0119: conflicting implementations`.
 - **macOS codesign after binary replacement.** Replacing `~/.local/bin/agentalign` with `cp target/release/agentalign ~/.local/bin/` triggers macOS `com.apple.provenance` xattr → SIGKILL on launch. Fix: `codesign -s - --force --deep ~/.local/bin/agentalign` after every `cp`. This is required for ANY Rust binary installed to a user-local bin dir on macOS.
