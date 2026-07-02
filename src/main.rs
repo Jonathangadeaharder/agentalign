@@ -339,6 +339,18 @@ fn push_to_agents_impl(
         }
     }
 
+    // Sync Cursor rules from AGENTS.md
+    match agentalign::rules::sync_rules(home, dry_run) {
+        Ok(count) => {
+            if count > 0 {
+                println!("  cursor rules synced: {}", count);
+            }
+        }
+        Err(e) => {
+            eprintln!("  cursor rules error: {}", e);
+        }
+    }
+
     Ok(())
 }
 

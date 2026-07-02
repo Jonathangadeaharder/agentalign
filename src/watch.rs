@@ -11,6 +11,7 @@
 
 use crate::instructions;
 use crate::mcp::factory::{AgentRegistry, AgentType, McpFormatFactory};
+use crate::rules;
 use crate::shared::config;
 use crate::shared::models::CanonicalWorkspaceState;
 use crate::skills;
@@ -145,6 +146,18 @@ pub fn run_daemon() -> anyhow::Result<()> {
         }
     }
 
+    // Sync Cursor rules on startup
+    match rules::sync_rules(&home, false) {
+        Ok(fixed) => {
+            if fixed > 0 {
+                eprintln!("  cursor rules synced: {}", fixed);
+            }
+        }
+        Err(e) => {
+            eprintln!("  cursor rules error: {}", e);
+        }
+    }
+
     let entries = build_watch_list(&home);
     let mut state = SyncState::load(&agents_dir);
 
@@ -242,12 +255,14 @@ fn process_changes(
     let mut deleted_agents: Vec<(String, AgentType, PathBuf)> = Vec::new();
     let mut instr_events: Vec<String> = Vec::new();
     let mut skills_events = false;
+    let mut rules_events = false;
 
     // Detect which files changed (including deleted)
     for entry in entries {
         if entry.id == "canonical-instructions" {
             if !state.is_unchanged(&entry.id, &entry.path) {
                 eprintln!("[watch] canonical instructions changed -> symlinks already reflect");
+                rules_events = true;
                 state.update_hash(&entry.id, &entry.path);
             }
         } else if entry.id == "canonical-skills" {
@@ -310,6 +325,20 @@ fn process_changes(
         }
     }
 
+    // Regenerate Cursor rules if AGENTS.md changed
+    if rules_events {
+        match rules::sync_rules(home, false) {
+            Ok(fixed) => {
+                if fixed > 0 {
+                    eprintln!("  cursor rules regenerated: {}", fixed);
+                }
+            }
+            Err(e) => {
+                eprintln!("  cursor rules error: {}", e);
+            }
+        }
+    }
+
     // Recreate any deleted agent configs from canonical
     if !deleted_agents.is_empty() {
         let canonical_raw = std::fs::read_to_string(agents_dir.join("mcp_config.json"))?;
@@ -329,8 +358,8 @@ fn process_changes(
         return Ok(());
     }
 
-    // If only instruction/skills events, no MCP sync needed
-    if !changed_canonical && changed_agents.is_empty() && deleted_agents.is_empty() && !instr_events.is_empty() {
+    // If only instruction/skills/rules events, no MCP sync needed
+    if !changed_canonical && changed_agents.is_empty() && deleted_agents.is_empty() && (!instr_events.is_empty() || skills_events || rules_events) {
         state.touch();
         state.save(agents_dir)?;
         return Ok(());

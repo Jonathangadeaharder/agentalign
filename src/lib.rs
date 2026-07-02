@@ -3,6 +3,7 @@ pub mod instructions;
 pub mod mcp;
 pub mod magic;
 pub mod migration;
+pub mod rules;
 pub mod shared;
 pub mod skills;
 pub mod state;
