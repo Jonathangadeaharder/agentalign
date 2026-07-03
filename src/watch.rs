@@ -277,7 +277,7 @@ fn process_changes(
     for entry in entries {
         if entry.id == "canonical-instructions" {
             if !state.is_unchanged(&entry.id, &entry.path) {
-                eprintln!("[watch] canonical instructions changed -> symlinks already reflect");
+                eprintln!("[watch] canonical instructions changed -> symlinks already reflect; regenerating rules");
                 rules_events = true;
                 state.update_hash(&entry.id, &entry.path);
             }
