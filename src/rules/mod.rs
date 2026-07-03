@@ -108,14 +108,25 @@ const RULE_DEFS: &[RuleDef] = &[
 ];
 
 /// Extract a section from AGENTS.md by its section number.
-/// Sections are delimited by `## N. ` headings.
+/// Sections are delimited by `## N. ` headings. Lines inside fenced code
+/// blocks (` ``` `) are never treated as headings, so a code sample that
+/// happens to contain a `## `-prefixed comment doesn't truncate the section.
 fn extract_section(content: &str, section_num: usize) -> Option<String> {
     let heading_prefix = format!("## {}. ", section_num);
     let lines: Vec<&str> = content.lines().collect();
     let mut start_idx = None;
     let mut end_idx = lines.len();
+    let mut in_code_block = false;
 
     for (i, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+
         if line.starts_with(&heading_prefix) {
             start_idx = Some(i);
         } else if start_idx.is_some() && line.starts_with("## ") {
@@ -158,16 +169,24 @@ fn build_body(content: &str, rule: &RuleDef) -> Option<String> {
 /// Format a Cursor `.mdc` file from a rule definition and its content.
 fn format_cursor_mdc(rule: &RuleDef, body: &str) -> String {
     let mut fm = String::from("---\n");
-    fm.push_str(&format!("description: {}\n", rule.description));
+    fm.push_str(&format!("description: {}\n", yaml_quote(rule.description)));
 
     if let Some(globs) = rule.globs {
-        fm.push_str(&format!("globs: {}\n", globs));
+        fm.push_str(&format!("globs: {}\n", yaml_quote(globs)));
     }
 
     fm.push_str(&format!("alwaysApply: {}\n", rule.always_apply));
     fm.push_str("---\n\n");
 
     format!("{}{}", fm, body)
+}
+
+/// Wrap a value in a double-quoted YAML scalar, escaping backslashes and
+/// double quotes. Plain (unquoted) scalars break when the value contains
+/// `: ` (e.g. a description like "TDD & Quality Assurance: ...") since that
+/// reads as a nested mapping to most YAML parsers.
+fn yaml_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Format a Claude Code `.md` rule file from a rule definition and its content.
@@ -515,13 +534,36 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_frontmatter_is_valid_yaml_with_colon_in_description() {
+        let (_tmp, home) = setup();
+        sync_rules(&home, false).unwrap();
+
+        // tdd-quality's description contains "Assurance: Red-Green-Refactor",
+        // an unquoted ": " inside a plain YAML scalar — previously invalid.
+        let tdd_rule = cursor_rules_dir(&home).join("tdd-quality.mdc");
+        let content = fs::read_to_string(&tdd_rule).unwrap();
+        let frontmatter = content
+            .strip_prefix("---\n")
+            .and_then(|s| s.split_once("\n---\n"))
+            .map(|(fm, _)| fm)
+            .expect("frontmatter delimiters");
+
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(frontmatter).expect("frontmatter must be valid YAML");
+        assert_eq!(
+            parsed["description"].as_str().unwrap(),
+            "TDD & Quality Assurance: Red-Green-Refactor, 90% branch coverage, vitest+stryker, Playwright."
+        );
+    }
+
+    #[test]
     fn test_cursor_globs_in_frontmatter() {
         let (_tmp, home) = setup();
         sync_rules(&home, false).unwrap();
 
         let python_rule = cursor_rules_dir(&home).join("python-stack.mdc");
         let content = fs::read_to_string(&python_rule).unwrap();
-        assert!(content.contains("globs: **/*.py"));
+        assert!(content.contains("globs: \"**/*.py\""));
         assert!(content.contains("alwaysApply: false"));
     }
 
@@ -585,5 +627,23 @@ mod tests {
         let section2 = extract_section(content, 2).unwrap();
         assert!(section2.contains("Second"));
         assert!(section2.contains("content B"));
+    }
+
+    #[test]
+    fn test_extract_section_ignores_headings_inside_code_blocks() {
+        let content = "## 1. First\n\
+                        ```bash\n\
+                        ## this looks like a heading but is inside a fence\n\
+                        echo hi\n\
+                        ```\n\
+                        content A\n\
+                        \n\
+                        ## 2. Second\n\
+                        content B\n";
+
+        let section = extract_section(content, 1).unwrap();
+        assert!(section.contains("this looks like a heading but is inside a fence"));
+        assert!(section.contains("content A"));
+        assert!(!section.contains("Second"));
     }
 }

@@ -44,16 +44,74 @@ impl SubagentStrategy for CursorAgentStrategy {
             );
         }
 
-        if let Some(ref color) = agent.frontmatter.color {
-            frontmatter.insert(
-                YamlValue::String("color".into()),
-                YamlValue::String(color.clone()),
-            );
-        }
+        // Cursor's agent frontmatter schema doesn't support `color`
+        // (name, description, model, tools only) — omit it, unlike Claude.
 
         let yaml_str = serde_yaml::to_string(&frontmatter)?;
         let yaml_trimmed = yaml_str.trim_end_matches('\n');
 
         Ok(format!("---\n{}\n---\n\n{}", yaml_trimmed, agent.body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::canonical::{AgentPermission, CanonicalAgentDefinition};
+    use std::collections::HashMap;
+
+    fn make_agent() -> ParsedAgentFile {
+        ParsedAgentFile {
+            name: "vision".to_string(),
+            frontmatter: CanonicalAgentDefinition {
+                description: "Vision agent".to_string(),
+                mode: "subagent".to_string(),
+                model: Some("kimi-k2.6".to_string()),
+                permission: AgentPermission {
+                    edit: "deny".to_string(),
+                    bash: "deny".to_string(),
+                },
+                tools: vec!["read_file".to_string(), "grep_search".to_string()],
+                color: Some("blue".to_string()),
+                extra: HashMap::new(),
+            },
+            body: "You are a vision agent.".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_cursor_format() {
+        let agent = make_agent();
+        let strategy = CursorAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(output.starts_with("---"));
+        assert!(output.contains("name: vision"));
+        assert!(output.contains("description: Vision agent"));
+        assert!(output.contains("model: kimi-k2.6"));
+        assert!(output.contains("tools: read_file, grep_search"));
+        assert!(output.contains("You are a vision agent."));
+    }
+
+    #[test]
+    fn test_cursor_format_omits_unsupported_color_field() {
+        let agent = make_agent();
+        let strategy = CursorAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(
+            !output.contains("color"),
+            "Cursor's agent schema doesn't support `color` — it must not be emitted"
+        );
+    }
+
+    #[test]
+    fn test_cursor_agents_dir() {
+        let strategy = CursorAgentStrategy;
+        let home = Path::new("/home/user");
+        assert_eq!(
+            strategy.agents_dir(home),
+            Path::new("/home/user/.cursor/agents")
+        );
     }
 }
