@@ -37,6 +37,7 @@ impl AgentType {
             AgentType::Codex,
             AgentType::OpenCode,
             AgentType::Antigravity,
+            AgentType::ZCode,
         ]
     }
 
@@ -145,6 +146,13 @@ impl AgentRegistry {
                 instruction_path: None,
                 skills_dir: None,
             },
+            AgentDescriptor {
+                agent_type: AgentType::ZCode,
+                label: "ZCode",
+                config_path: home.join(".zcode").join("cli").join("config.json"),
+                instruction_path: Some(home.join(".zcode").join("AGENTS.md")),
+                skills_dir: None, // ZCode reads ~/.agents/skills natively
+            },
         ]
     }
 
@@ -174,14 +182,7 @@ impl McpFormatFactory {
             AgentType::Codex => Box::new(super::codex::CodexStrategy),
             AgentType::OpenCode => Box::new(super::opencode::OpenCodeStrategy),
             AgentType::Antigravity => Box::new(super::antigravity::AntigravityStrategy),
-            // zcode is subagents-only scope; MCP sync is intentionally not
-            // implemented. This arm is unreachable from any code path that
-            // iterates `all()` or `synced_agents()` (zcode is absent from
-            // both). If zcode is later added to those lists, this panics
-            // loudly instead of silently producing wrong MCP output.
-            AgentType::ZCode => unimplemented!(
-                "zcode MCP sync is not supported (subagents-only scope)"
-            ),
+            AgentType::ZCode => Box::new(super::zcode::ZCodeStrategy),
         }
     }
 
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn test_all_agents_non_empty() {
         let strategies = McpFormatFactory::all_agents();
-        assert_eq!(strategies.len(), 10);
+        assert_eq!(strategies.len(), 11);
     }
 
     #[test]
@@ -213,5 +214,6 @@ mod tests {
         assert_eq!(McpFormatFactory::from_agent(AgentType::Codex).target_name(), "codex");
         assert_eq!(McpFormatFactory::from_agent(AgentType::OpenCode).target_name(), "opencode");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Antigravity).target_name(), "antigravity");
+        assert_eq!(McpFormatFactory::from_agent(AgentType::ZCode).target_name(), "zcode");
     }
 }

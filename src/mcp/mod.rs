@@ -12,4 +12,5 @@ pub mod strategy;
 pub mod validation;
 pub mod vscode;
 pub mod windsurf;
+pub mod zcode;
 pub mod zed;
