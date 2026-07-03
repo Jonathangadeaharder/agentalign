@@ -146,15 +146,15 @@ pub fn run_daemon() -> anyhow::Result<()> {
         }
     }
 
-    // Sync Cursor rules on startup
+    // Sync AGENTS.md sections into Cursor + Claude rules on startup
     match rules::sync_rules(&home, false) {
         Ok(fixed) => {
             if fixed > 0 {
-                eprintln!("  cursor rules synced: {}", fixed);
+                eprintln!("  rules synced: {}", fixed);
             }
         }
         Err(e) => {
-            eprintln!("  cursor rules error: {}", e);
+            eprintln!("  rules sync error: {}", e);
         }
     }
 
@@ -325,16 +325,16 @@ fn process_changes(
         }
     }
 
-    // Regenerate Cursor rules if AGENTS.md changed
+    // Regenerate Cursor + Claude rules if AGENTS.md changed
     if rules_events {
         match rules::sync_rules(home, false) {
             Ok(fixed) => {
                 if fixed > 0 {
-                    eprintln!("  cursor rules regenerated: {}", fixed);
+                    eprintln!("  rules regenerated: {}", fixed);
                 }
             }
             Err(e) => {
-                eprintln!("  cursor rules error: {}", e);
+                eprintln!("  rules sync error: {}", e);
             }
         }
     }
