@@ -21,6 +21,7 @@ pub enum AgentType {
     OpenCode,
     Antigravity,
     ZCode,
+    Grok,
 }
 
 impl AgentType {
@@ -38,6 +39,7 @@ impl AgentType {
             AgentType::OpenCode,
             AgentType::Antigravity,
             AgentType::ZCode,
+            AgentType::Grok,
         ]
     }
 
@@ -55,6 +57,7 @@ impl AgentType {
             AgentType::OpenCode => "opencode",
             AgentType::Antigravity => "antigravity",
             AgentType::ZCode => "zcode",
+            AgentType::Grok => "grok",
         }
     }
 
@@ -72,6 +75,7 @@ impl AgentType {
             "opencode" => Some(AgentType::OpenCode),
             "antigravity" => Some(AgentType::Antigravity),
             "zcode" | "z-code" => Some(AgentType::ZCode),
+            "grok" => Some(AgentType::Grok),
             _ => None,
         }
     }
@@ -153,6 +157,13 @@ impl AgentRegistry {
                 instruction_path: Some(home.join(".zcode").join("AGENTS.md")),
                 skills_dir: None, // ZCode reads ~/.agents/skills natively
             },
+            AgentDescriptor {
+                agent_type: AgentType::Grok,
+                label: "Grok",
+                config_path: home.join(".grok").join("config.toml"),
+                instruction_path: Some(home.join(".grok").join("AGENTS.md")),
+                skills_dir: Some(home.join(".grok").join("skills")),
+            },
         ]
     }
 
@@ -183,6 +194,7 @@ impl McpFormatFactory {
             AgentType::OpenCode => Box::new(super::opencode::OpenCodeStrategy),
             AgentType::Antigravity => Box::new(super::antigravity::AntigravityStrategy),
             AgentType::ZCode => Box::new(super::zcode::ZCodeStrategy),
+            AgentType::Grok => Box::new(super::grok::GrokStrategy),
         }
     }
 
@@ -199,7 +211,7 @@ mod tests {
     #[test]
     fn test_all_agents_non_empty() {
         let strategies = McpFormatFactory::all_agents();
-        assert_eq!(strategies.len(), 11);
+        assert_eq!(strategies.len(), 12);
     }
 
     #[test]
@@ -215,5 +227,6 @@ mod tests {
         assert_eq!(McpFormatFactory::from_agent(AgentType::OpenCode).target_name(), "opencode");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Antigravity).target_name(), "antigravity");
         assert_eq!(McpFormatFactory::from_agent(AgentType::ZCode).target_name(), "zcode");
+        assert_eq!(McpFormatFactory::from_agent(AgentType::Grok).target_name(), "grok");
     }
 }

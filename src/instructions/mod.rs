@@ -47,6 +47,10 @@ fn registry(home: &Path) -> Vec<InstructionEntry> {
             agent: "zcode",
             symlink_path: home.join(".zcode").join("AGENTS.md"),
         },
+        InstructionEntry {
+            agent: "grok",
+            symlink_path: home.join(".grok").join("AGENTS.md"),
+        },
     ]
 }
 
@@ -381,7 +385,7 @@ mod tests {
 
         // None of the symlinks exist yet
         let fixed = heal_all(&home).unwrap();
-        assert_eq!(fixed, 5); // opencode, claude, gemini, codex, zcode
+        assert_eq!(fixed, 6); // opencode, claude, gemini, codex, zcode, grok
 
         // Second heal should be a no-op
         let fixed2 = heal_all(&home).unwrap();

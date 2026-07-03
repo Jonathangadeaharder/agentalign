@@ -10,6 +10,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
+pub mod grok;
 pub mod opencode;
 pub mod zcode;
 
@@ -42,6 +43,7 @@ impl SubagentRegistry {
             Box::new(CodexAgentStrategy),
             Box::new(cursor::CursorAgentStrategy),
             Box::new(zcode::ZCodeAgentStrategy),
+            Box::new(grok::GrokAgentStrategy),
         ]
     }
 }

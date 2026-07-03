@@ -56,6 +56,11 @@ fn registry(home: &Path) -> Vec<SkillsEntry> {
             agent: "opencode",
             skills_dir: home.join(".config").join("opencode").join("skills"),
         },
+        // Grok CLI has its own skills dir at ~/.grok/skills/.
+        SkillsEntry {
+            agent: "grok",
+            skills_dir: home.join(".grok").join("skills"),
+        },
         // ZCode reads ~/.agents/skills natively (per the zcode-guide
         // discovery order), so it is intentionally omitted here — no
         // symlinks needed. AGENTS.md instructions are also read from

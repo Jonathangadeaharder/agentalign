@@ -6,6 +6,7 @@ pub mod codex;
 pub mod copilot;
 pub mod factory;
 pub mod gemini;
+pub mod grok;
 pub mod interpolation;
 pub mod opencode;
 pub mod strategy;
