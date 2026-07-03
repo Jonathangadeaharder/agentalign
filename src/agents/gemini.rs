@@ -27,11 +27,14 @@ impl SubagentStrategy for GeminiAgentStrategy {
         AgentType::Gemini
     }
 
-    /// Agy agents_dir is the canonical store — same as where agentalign reads from.
-    /// Agy discovers agents from ~/.agents/agents/*.md directly.
-    /// The format_agent output here is a no-op since Agy reads canonical .md files.
+    /// Gemini agents_dir is a Gemini-specific copy at ~/.gemini/agents.
+    /// Agy discovers agents from ~/.agents/agents/*.md directly (the canonical
+    /// store), so the .md files written here are a reference copy — NOT the
+    /// canonical source. This avoids overwriting ~/.agents/agents/ on sync.
+    /// The runtime agent.json files are written by post_sync to
+    /// ~/.gemini/agents/<name>/agent.json.
     fn agents_dir(&self, home: &Path) -> std::path::PathBuf {
-        home.join(".agents").join("agents")
+        home.join(".gemini").join("agents")
     }
 
     /// Format agent as markdown — same as canonical format.
@@ -68,24 +71,50 @@ impl SubagentStrategy for GeminiAgentStrategy {
 fn format_agent_json(agent: &ParsedAgentFile) -> anyhow::Result<String> {
     use serde_json::{json, Value};
 
-    let tool_names: Vec<Value> = agent
-        .frontmatter
-        .tools
-        .iter()
-        .map(|t| {
-            let agy_name = match t.as_str() {
-                "Read" => "view_file",
-                "Edit" => "replace_file_content",
-                "Write" => "write_to_file",
-                "Grep" => "grep_search",
-                "Glob" => "find_by_name",
-                "Bash" => "run_command",
-                "WebFetch" => "read_url_content",
-                other => other,
-            };
-            Value::String(agy_name.to_string())
-        })
-        .collect();
+    let tool_names: Vec<Value> = if !agent.frontmatter.tools.is_empty() {
+        // Explicit tools list — map canonical names to Agy names
+        agent
+            .frontmatter
+            .tools
+            .iter()
+            .map(|t| {
+                let agy_name = match t.as_str() {
+                    "Read" => "view_file",
+                    "Edit" => "replace_file_content",
+                    "Write" => "write_to_file",
+                    "Grep" => "grep_search",
+                    "Glob" => "find_by_name",
+                    "Bash" => "run_command",
+                    "WebFetch" => "read_url_content",
+                    other => other,
+                };
+                Value::String(agy_name.to_string())
+            })
+            .collect()
+    } else {
+        // No explicit tools — derive from full Agy tool set, excluding denied
+        // tools based on canonical permission {edit, bash}.
+        let all_tools = vec![
+            "view_file",
+            "replace_file_content",
+            "write_to_file",
+            "grep_search",
+            "find_by_name",
+            "run_command",
+            "read_url_content",
+        ];
+        all_tools
+            .iter()
+            .filter(|t| match **t {
+                "replace_file_content" | "write_to_file" => {
+                    agent.frontmatter.permission.edit != "deny"
+                }
+                "run_command" => agent.frontmatter.permission.bash != "deny",
+                _ => true,
+            })
+            .map(|t| Value::String(t.to_string()))
+            .collect()
+    };
 
     let agent_json = json!({
         "name": agent.name,
@@ -177,6 +206,36 @@ mod tests {
     }
 
     #[test]
+    fn test_gemini_tool_names_from_permission() {
+        // When tools is empty and permission denies edit+bash, toolNames
+        // should exclude replace_file_content, write_to_file, run_command
+        // but include view_file, grep_search, find_by_name, read_url_content.
+        let mut agent = make_agent();
+        agent.frontmatter.tools = vec![]; // no explicit tools
+        // permission is already {edit: deny, bash: deny} from make_agent()
+        let output = format_agent_json(&agent).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let tools: Vec<String> = parsed["config"]["customAgent"]["toolNames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+
+        // Should have read-only tools only
+        assert!(tools.contains(&"view_file".to_string()));
+        assert!(tools.contains(&"grep_search".to_string()));
+        assert!(tools.contains(&"find_by_name".to_string()));
+        assert!(tools.contains(&"read_url_content".to_string()));
+        // Should NOT have edit/bash tools
+        assert!(!tools.contains(&"replace_file_content".to_string()));
+        assert!(!tools.contains(&"write_to_file".to_string()));
+        assert!(!tools.contains(&"run_command".to_string()));
+        // Should not be empty
+        assert!(!tools.is_empty());
+    }
+
+    #[test]
     fn test_gemini_system_prompt_sections() {
         let agent = make_agent();
         let output = format_agent_json(&agent).unwrap();
@@ -194,7 +253,7 @@ mod tests {
         let home = Path::new("/home/user");
         assert_eq!(
             strategy.agents_dir(home),
-            Path::new("/home/user/.agents/agents")
+            Path::new("/home/user/.gemini/agents")
         );
     }
 

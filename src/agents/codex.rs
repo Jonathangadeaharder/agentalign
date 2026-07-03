@@ -47,15 +47,22 @@ impl SubagentStrategy for CodexAgentStrategy {
                     YamlValue::String("short_description".into()),
                     YamlValue::String(agent.frontmatter.description.clone()),
                 );
-                // default_prompt: first line of body, truncated to 80 chars
-                let prompt_preview = agent
+                // default_prompt: first paragraph of body (up to first blank
+                // line), capped at 200 chars at a word boundary so it doesn't
+                // cut mid-word.
+                let first_para = agent
                     .body
-                    .lines()
+                    .split("\n\n")
                     .next()
                     .unwrap_or("")
-                    .chars()
-                    .take(80)
-                    .collect::<String>();
+                    .trim();
+                let prompt_preview = if first_para.len() <= 200 {
+                    first_para.to_string()
+                } else {
+                    let truncated = &first_para[..200];
+                    let last_space = truncated.rfind(' ').unwrap_or(200);
+                    format!("{}…", &first_para[..last_space])
+                };
                 fields.insert(
                     YamlValue::String("default_prompt".into()),
                     YamlValue::String(prompt_preview),
@@ -112,8 +119,25 @@ mod tests {
         assert!(output.contains("display_name: vision"));
         assert!(output.contains("short_description: Vision agent"));
         assert!(output.contains("default_prompt:"));
+        // default_prompt should contain the full first paragraph, not truncated
+        assert!(output.contains("You are a vision agent. You analyze images."));
         assert!(!output.contains("mode:"));
         assert!(!output.contains("permission:"));
+    }
+
+    #[test]
+    fn test_codex_long_prompt_truncates_at_word_boundary() {
+        let mut agent = make_agent();
+        // 250-char first paragraph — should truncate at ~200 chars
+        agent.body = "This is a very long prompt that exceeds two hundred characters and should be truncated at a word boundary rather than cutting mid-word like the old behavior did. We want the preview to end cleanly with an ellipsis character appended so it looks professional in the Codex UI. ".to_string()
+            + "More text here to push past the limit.";
+        let strategy = CodexAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        // Should contain the ellipsis
+        assert!(output.contains("…"));
+        // Should NOT contain the full body (it was >200 chars)
+        assert!(!output.contains("More text here to push past the limit."));
     }
 
     #[test]

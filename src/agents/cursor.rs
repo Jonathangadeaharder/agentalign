@@ -47,6 +47,23 @@ impl SubagentStrategy for CursorAgentStrategy {
         // Cursor's agent frontmatter schema doesn't support `color`
         // (name, description, model, tools only) — omit it, unlike Claude.
 
+        // Map canonical permission {edit, bash} → disallowedTools.
+        // Cursor (like Claude Code) denies tools by name in `disallowedTools`.
+        let mut disallowed: Vec<&str> = Vec::new();
+        if agent.frontmatter.permission.edit == "deny" {
+            disallowed.push("Edit");
+            disallowed.push("Write");
+        }
+        if agent.frontmatter.permission.bash == "deny" {
+            disallowed.push("Bash");
+        }
+        if !disallowed.is_empty() {
+            frontmatter.insert(
+                YamlValue::String("disallowedTools".into()),
+                YamlValue::String(disallowed.join(", ")),
+            );
+        }
+
         let yaml_str = serde_yaml::to_string(&frontmatter)?;
         let yaml_trimmed = yaml_str.trim_end_matches('\n');
 
@@ -90,7 +107,23 @@ mod tests {
         assert!(output.contains("description: Vision agent"));
         assert!(output.contains("model: kimi-k2.6"));
         assert!(output.contains("tools: read_file, grep_search"));
+        assert!(output.contains("disallowedTools: Edit, Write, Bash"));
         assert!(output.contains("You are a vision agent."));
+    }
+
+    #[test]
+    fn test_cursor_no_disallowed_when_all_allowed() {
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "allow".to_string();
+        agent.frontmatter.permission.bash = "allow".to_string();
+        agent.frontmatter.tools = vec![];
+        let strategy = CursorAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(
+            !output.contains("disallowedTools"),
+            "no disallowedTools when all permissions are allow"
+        );
     }
 
     #[test]
