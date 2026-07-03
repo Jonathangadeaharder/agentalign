@@ -112,7 +112,7 @@ impl AgentRegistry {
                 label: "Cursor",
                 config_path: home.join(".cursor").join("mcp.json"),
                 instruction_path: None,
-                skills_dir: None,
+                skills_dir: Some(home.join(".cursor").join("skills")),
             },
             AgentDescriptor {
                 agent_type: AgentType::Gemini,

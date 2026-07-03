@@ -46,6 +46,10 @@ fn registry(home: &Path) -> Vec<SkillsEntry> {
             agent: "codex",
             skills_dir: home.join(".codex").join("skills"),
         },
+        SkillsEntry {
+            agent: "cursor",
+            skills_dir: home.join(".cursor").join("skills"),
+        },
     ]
 }
 

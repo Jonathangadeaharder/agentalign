@@ -339,6 +339,18 @@ fn push_to_agents_impl(
         }
     }
 
+    // Sync AGENTS.md sections into Cursor + Claude rules
+    match agentalign::rules::sync_rules(home, dry_run) {
+        Ok(count) => {
+            if count > 0 {
+                println!("  rules synced: {}", count);
+            }
+        }
+        Err(e) => {
+            eprintln!("  rules sync error: {}", e);
+        }
+    }
+
     Ok(())
 }
 

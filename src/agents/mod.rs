@@ -8,6 +8,7 @@ use std::path::Path;
 pub mod canonical;
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 pub mod gemini;
 pub mod opencode;
 
@@ -38,6 +39,7 @@ impl SubagentRegistry {
             Box::new(claude::ClaudeAgentStrategy),
             Box::new(gemini::GeminiAgentStrategy),
             Box::new(CodexAgentStrategy),
+            Box::new(cursor::CursorAgentStrategy),
         ]
     }
 }
