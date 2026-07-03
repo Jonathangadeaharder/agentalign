@@ -11,6 +11,7 @@ pub mod codex;
 pub mod cursor;
 pub mod gemini;
 pub mod opencode;
+pub mod zcode;
 
 pub trait SubagentStrategy {
     fn agent_type(&self) -> AgentType;
@@ -40,6 +41,7 @@ impl SubagentRegistry {
             Box::new(gemini::GeminiAgentStrategy),
             Box::new(CodexAgentStrategy),
             Box::new(cursor::CursorAgentStrategy),
+            Box::new(zcode::ZCodeAgentStrategy),
         ]
     }
 }

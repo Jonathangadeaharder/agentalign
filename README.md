@@ -80,8 +80,10 @@ src/
 │   ├── canonical.rs     # Load/parse canonical agent definitions (~/.agents/agents/*.md)
 │   ├── claude.rs        # ClaudeAgentStrategy: markdown with YAML frontmatter
 │   ├── codex.rs         # CodexAgentStrategy: openai.yaml inside skill dirs
+│   ├── cursor.rs        # CursorAgentStrategy: same format as Claude, no `color`
 │   ├── gemini.rs        # GeminiAgentStrategy: Agy customAgent JSON format
-│   └── opencode.rs      # OpenCodeAgentStrategy: same format as Claude
+│   ├── opencode.rs      # OpenCodeAgentStrategy: same format as Claude
+│   └── zcode.rs         # ZCodeAgentStrategy: disallowedTools from permission
 ├── instructions/
 │   └── mod.rs           # Instruction symlink healing (AGENTS.md → CLAUDE.md, etc.)
 ├── mcp/
