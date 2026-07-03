@@ -331,6 +331,89 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Collect orphan skills from all tool directories into the canonical store.
+///
+/// Scans every agent's skills directory for **real directories** (not symlinks)
+/// that don't exist in the canonical store (`~/.agents/skills/`). Moves each
+/// orphan to the canonical store, then replaces the original with a symlink.
+/// This is the "reverse sync" — `heal_all` pushes canonical → tools, this
+/// collects tools → canonical.
+///
+/// Called by `agentalign migrate`.
+pub fn collect_orphan_skills(home: &Path) -> anyhow::Result<usize> {
+    let canonical_dir = canonical_skills_dir(home);
+    std::fs::create_dir_all(&canonical_dir)?;
+
+    // Build set of skills already in canonical store
+    let canonical_names: std::collections::HashSet<String> = std::fs::read_dir(&canonical_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| !n.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let entries = registry(home);
+    let backup_dir = home.join(".agents").join("backups");
+    let mut collected = 0usize;
+
+    for entry in &entries {
+        if !entry.skills_dir.exists() {
+            continue;
+        }
+
+        for dir_entry in std::fs::read_dir(&entry.skills_dir)? {
+            let dir_entry = dir_entry?;
+            let path = dir_entry.path();
+
+            // Skip files (only collect directories)
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Skip symlinks (already linked to canonical)
+            if std::fs::symlink_metadata(&path)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let name = match dir_entry.file_name().into_string() {
+                Ok(n) if !n.starts_with('.') => n,
+                _ => continue,
+            };
+
+            // Skip if already in canonical store
+            if canonical_names.contains(&name) {
+                continue;
+            }
+
+            // Move to canonical store (copy then remove — rename fails across
+            // filesystems or when hidden files prevent atomic move).
+            let canonical_path = canonical_dir.join(&name);
+            copy_dir_recursive(&path, &canonical_path)?;
+            std::fs::remove_dir_all(&path)?;
+            collected += 1;
+            eprintln!(
+                "  collected skill {} from {} -> canonical",
+                name,
+                entry.agent
+            );
+        }
+    }
+
+    // Now heal all symlinks so the moved skills are linked back everywhere
+    if collected > 0 {
+        heal_all(home)?;
+    }
+
+    Ok(collected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -448,6 +448,23 @@ fn run() -> Result<()> {
                     "Migration complete. Run `agentalign sync` to push to all agents."
                 );
             }
+
+            // Collect orphan skills from tool directories into canonical store
+            if dry_run {
+                println!("\n[DRY RUN] Would scan for orphan skills in tool directories...");
+            } else {
+                match agentalign::skills::collect_orphan_skills(&home) {
+                    Ok(count) if count > 0 => {
+                        println!("Collected {} orphan skill(s) into canonical store.", count);
+                    }
+                    Ok(_) => {
+                        println!("No orphan skills found.");
+                    }
+                    Err(e) => {
+                        eprintln!("Skill collection error: {}", e);
+                    }
+                }
+            }
         }
 
         Commands::Sync { dry_run } => {
