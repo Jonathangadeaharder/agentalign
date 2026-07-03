@@ -20,6 +20,7 @@ pub enum AgentType {
     Codex,
     OpenCode,
     Antigravity,
+    ZCode,
 }
 
 impl AgentType {
@@ -52,6 +53,7 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::OpenCode => "opencode",
             AgentType::Antigravity => "antigravity",
+            AgentType::ZCode => "zcode",
         }
     }
 
@@ -68,6 +70,7 @@ impl AgentType {
             "codex" => Some(AgentType::Codex),
             "opencode" => Some(AgentType::OpenCode),
             "antigravity" => Some(AgentType::Antigravity),
+            "zcode" | "z-code" => Some(AgentType::ZCode),
             _ => None,
         }
     }
@@ -171,6 +174,14 @@ impl McpFormatFactory {
             AgentType::Codex => Box::new(super::codex::CodexStrategy),
             AgentType::OpenCode => Box::new(super::opencode::OpenCodeStrategy),
             AgentType::Antigravity => Box::new(super::antigravity::AntigravityStrategy),
+            // zcode is subagents-only scope; MCP sync is intentionally not
+            // implemented. This arm is unreachable from any code path that
+            // iterates `all()` or `synced_agents()` (zcode is absent from
+            // both). If zcode is later added to those lists, this panics
+            // loudly instead of silently producing wrong MCP output.
+            AgentType::ZCode => unimplemented!(
+                "zcode MCP sync is not supported (subagents-only scope)"
+            ),
         }
     }
 
