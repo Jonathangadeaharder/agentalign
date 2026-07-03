@@ -4,7 +4,7 @@
 //! skill directories. Each skill subdirectory (e.g., `~/.agents/skills/diagnose/`)
 //! is symlinked into per-agent skills directories:
 //! - `~/.claude/skills/diagnose` → `~/.agents/skills/diagnose`
-//! - `~/.gemini/skills/diagnose` → `~/.agents/skills/diagnose`
+//! - `~/.gemini/config/skills/diagnose` → `~/.agents/skills/diagnose`
 //! - `~/.codex/skills/diagnose` → `~/.agents/skills/diagnose`
 //!
 //! Real directories (pre-agentalign) are backed up and replaced with symlinks.
@@ -38,9 +38,12 @@ fn registry(home: &Path) -> Vec<SkillsEntry> {
             agent: "claude",
             skills_dir: home.join(".claude").join("skills"),
         },
+        // Antigravity CLI discovers skills by recursively scanning
+        // ~/.gemini/config/ for skills/*/SKILL.md (same as plugins).
+        // Using ~/.gemini/config/skills/ so agy finds the canonical skills.
         SkillsEntry {
             agent: "gemini",
-            skills_dir: home.join(".gemini").join("skills"),
+            skills_dir: home.join(".gemini").join("config").join("skills"),
         },
         SkillsEntry {
             agent: "codex",
