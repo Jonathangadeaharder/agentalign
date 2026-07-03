@@ -50,6 +50,16 @@ fn registry(home: &Path) -> Vec<SkillsEntry> {
             agent: "cursor",
             skills_dir: home.join(".cursor").join("skills"),
         },
+        // OpenCode does NOT read ~/.agents/skills natively — it needs
+        // symlinks in its own skills directory.
+        SkillsEntry {
+            agent: "opencode",
+            skills_dir: home.join(".config").join("opencode").join("skills"),
+        },
+        // ZCode reads ~/.agents/skills natively (per the zcode-guide
+        // discovery order), so it is intentionally omitted here — no
+        // symlinks needed. AGENTS.md instructions are also read from
+        // ~/.zcode/AGENTS.md natively.
     ]
 }
 
