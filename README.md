@@ -56,12 +56,12 @@ agentalign watch                            # Run the file watcher daemon
 
 ## Key Features
 
-- **Transactional sync**: every write is wrapped in a transaction with backup + SHA-256 checksum; `restore` rolls back.
+- **Transactional sync**: every write is wrapped in a transaction with backup + SHA-256 checksum. `restore` rolls back.
 - **Delta merger**: bidirectional sync detects adds, updates, and removals between agent configs and canonical.
 - **Secret splitting**: sensitive fields (api_key, token, password, etc.) are extracted to OS keychain or `~/.agents/local.json` fallback, replaced with `${ENV_AGENTALIGN_SECRET_*}` placeholders.
 - **Environment interpolation**: normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
-- **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source; agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
-- **Skills directory syncing**: `~/.agents/skills/` is the canonical source; per-agent skill dirs are symlinked.
+- **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source. Agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
+- **Skills directory syncing**: `~/.agents/skills/` is the canonical source. Per-agent skill dirs are symlinked.
 - **Magic mode**: installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
 - **Local entries protection**: `~/.agents/local_entries.json` preserves user-added keys during sync.
 - **Per-agent skip list**: `~/.agents/agent_skip.json` prevents specific servers from being pushed to specific agents.
