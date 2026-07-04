@@ -1,6 +1,6 @@
 # agentalign
 
-Rust CLI for unifying AI agent MCP server configurations across multiple coding agents. Maintains a canonical config at `~/.agents/mcp_config.json` (OpenCode-derived format) and propagates it to all supported agents with transactional rollback, bidirectional sync, secret splitting, and symlink healing.
+Rust CLI for unifying AI agent configuration across multiple coding agents. Syncs four domains from a canonical `~/.agents/` store: MCP servers (`mcp_config.json`), agent definitions (`agents/*.md`), instruction files (`AGENTS.md` symlinks), and skills (`skills/` symlinks). Propagates to all supported agents with transactional rollback, bidirectional sync, secret splitting, and symlink healing.
 
 ## Stack
 
@@ -56,15 +56,15 @@ agentalign watch                            # Run the file watcher daemon
 
 ## Key Features
 
-- **Transactional sync** — every write is wrapped in a transaction with backup + SHA-256 checksum; `restore` rolls back.
-- **Delta merger** — bidirectional sync detects adds, updates, and removals between agent configs and canonical.
-- **Secret splitting** — sensitive fields (api_key, token, password, etc.) are extracted to OS keychain or `~/.agents/local.json` fallback, replaced with `${ENV_AGENTALIGN_SECRET_*}` placeholders.
-- **Environment interpolation** — normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
-- **Instruction symlink healing** — `~/.agents/AGENTS.md` is the canonical source; agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
-- **Skills directory syncing** — `~/.agents/skills/` is the canonical source; per-agent skill dirs are symlinked.
-- **Magic mode** — installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
-- **Local entries protection** — `~/.agents/local_entries.json` preserves user-added keys during sync.
-- **Per-agent skip list** — `~/.agents/agent_skip.json` prevents specific servers from being pushed to specific agents.
+- **Transactional sync**: every write is wrapped in a transaction with backup + SHA-256 checksum; `restore` rolls back.
+- **Delta merger**: bidirectional sync detects adds, updates, and removals between agent configs and canonical.
+- **Secret splitting**: sensitive fields (api_key, token, password, etc.) are extracted to OS keychain or `~/.agents/local.json` fallback, replaced with `${ENV_AGENTALIGN_SECRET_*}` placeholders.
+- **Environment interpolation**: normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
+- **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source; agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
+- **Skills directory syncing**: `~/.agents/skills/` is the canonical source; per-agent skill dirs are symlinked.
+- **Magic mode**: installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
+- **Local entries protection**: `~/.agents/local_entries.json` preserves user-added keys during sync.
+- **Per-agent skip list**: `~/.agents/agent_skip.json` prevents specific servers from being pushed to specific agents.
 
 ## Structure
 
@@ -75,7 +75,7 @@ src/
 ├── state.rs             # Sync state tracking (SHA-256 hashes, loop prevention)
 ├── magic.rs             # LaunchAgent install/uninstall/status
 ├── watch.rs             # File watcher daemon (notify crate, bidirectional sync)
-├── agents/              # Subagent definition sync (canonical → per-agent formats)
+├── agents/              # Subagent definition sync (canonical -> per-agent formats)
 │   ├── mod.rs           # SubagentRegistry, sync_agents()
 │   ├── canonical.rs     # Load/parse canonical agent definitions (~/.agents/agents/*.md)
 │   ├── claude.rs        # ClaudeAgentStrategy: markdown with YAML frontmatter
@@ -85,7 +85,7 @@ src/
 │   ├── opencode.rs      # OpenCodeAgentStrategy: same format as Claude
 │   └── zcode.rs         # ZCodeAgentStrategy: disallowedTools from permission
 ├── instructions/
-│   └── mod.rs           # Instruction symlink healing (AGENTS.md → CLAUDE.md, etc.)
+│   └── mod.rs           # Instruction symlink healing (AGENTS.md -> CLAUDE.md, etc.)
 ├── mcp/
 │   ├── mod.rs
 │   ├── factory.rs       # AgentRegistry + McpFormatFactory
@@ -105,7 +105,7 @@ src/
 │   └── antigravity.rs   # Antigravity strategy
 ├── migration/
 │   ├── mod.rs
-│   ├── secret_splitter.rs  # Extract sensitive fields → keychain placeholders
+│   ├── secret_splitter.rs  # Extract sensitive fields -> keychain placeholders
 │   └── local_json.rs       # Local fallback secret store (~/.agents/local.json)
 ├── skills/
 │   └── mod.rs           # Skills directory symlink healing
