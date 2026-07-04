@@ -3,6 +3,12 @@ name = "agentalign"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Agent Configuration Unification Engine. Syncs MCP servers, agent definitions, instruction files, and skills across Claude, Cursor, Gemini, Codex, OpenCode, and Antigravity via ~/.agents/ canonical store."
+repository = "https://github.com/Jonathangadeaharder/agentalign"
+homepage = "https://github.com/Jonathangadeaharder/agentalign"
+readme = "README.md"
+keywords = ["mcp", "config", "cli", "agent", "sync"]
+categories = ["command-line-utilities", "config", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
