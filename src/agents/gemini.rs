@@ -94,7 +94,7 @@ fn format_agent_json(agent: &ParsedAgentFile) -> anyhow::Result<String> {
     } else {
         // No explicit tools — derive from full Agy tool set, excluding denied
         // tools based on canonical permission {edit, bash}.
-        let all_tools = vec![
+        let all_tools = [
             "view_file",
             "replace_file_content",
             "write_to_file",
@@ -211,7 +211,7 @@ mod tests {
         // should exclude replace_file_content, write_to_file, run_command
         // but include view_file, grep_search, find_by_name, read_url_content.
         let mut agent = make_agent();
-        agent.frontmatter.tools = vec![]; // no explicit tools
+        agent.frontmatter.tools = vec![];
         // permission is already {edit: deny, bash: deny} from make_agent()
         let output = format_agent_json(&agent).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();

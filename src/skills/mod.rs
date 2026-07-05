@@ -212,6 +212,9 @@ pub fn heal_skill(
 /// Heal all skills for all agents. Returns the number of changes made.
 pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     let canonical_dir = canonical_skills_dir(home);
+    if let Err(e) = collect_opencode_commands_as_skills(home) {
+        eprintln!("  warning: failed to import opencode commands: {}", e);
+    }
 
     if !canonical_dir.exists() {
         eprintln!(
@@ -260,16 +263,94 @@ pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "  error healing {}/{}: {}",
-                        entry.agent, skill_name, e
-                    );
+                    eprintln!("  error healing {}/{}: {}", entry.agent, skill_name, e);
                 }
             }
         }
     }
 
     Ok(fixed)
+}
+
+/// Import top-level OpenCode command markdown files into the canonical skills store.
+///
+/// OpenCode commands live as `~/.config/opencode/commands/<name>.md`, while
+/// Codex and the other agents consume skill directories with `SKILL.md`.
+/// Creating the canonical skill lets the existing symlink sync distribute the
+/// command everywhere without teaching every agent about OpenCode's command path.
+pub fn collect_opencode_commands_as_skills(home: &Path) -> anyhow::Result<usize> {
+    let commands_dir = home.join(".config").join("opencode").join("commands");
+
+    if !commands_dir.exists() {
+        return Ok(0);
+    }
+
+    let canonical_dir = canonical_skills_dir(home);
+    let mut collected = 0usize;
+
+    for entry in std::fs::read_dir(&commands_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+
+        let skill_name = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(name) if !name.starts_with('.') && !name.is_empty() => name,
+            _ => continue,
+        };
+
+        let skill_dir = canonical_dir.join(skill_name);
+        let skill_file = skill_dir.join("SKILL.md");
+        if skill_file.exists() {
+            continue;
+        }
+
+        match import_opencode_command_as_skill(&path, &skill_dir, &skill_file, skill_name) {
+            Ok(()) => {
+                collected += 1;
+                eprintln!(
+                    "  collected opencode command {} -> canonical skill",
+                    skill_name
+                );
+            }
+            Err(e) => eprintln!("  error importing opencode command {}: {}", skill_name, e),
+        }
+    }
+
+    Ok(collected)
+}
+
+fn import_opencode_command_as_skill(
+    command_path: &Path,
+    skill_dir: &Path,
+    skill_file: &Path,
+    skill_name: &str,
+) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(command_path)?;
+    std::fs::create_dir_all(skill_dir)?;
+    std::fs::write(skill_file, as_skill_markdown(skill_name, &content))?;
+    Ok(())
+}
+
+fn as_skill_markdown(skill_name: &str, content: &str) -> String {
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---") {
+            let frontmatter = &rest[..end];
+            if frontmatter.lines().any(|line| line.starts_with("name:")) {
+                return content.to_string();
+            }
+
+            let body = &rest[end..];
+            return format!("---\nname: {}\n{}{}", skill_name, frontmatter, body);
+        }
+    }
+
+    format!(
+        "---\nname: {}\ndescription: Imported OpenCode command\n---\n\n{}",
+        skill_name, content
+    )
 }
 
 /// Heal skills for a single agent by name.
@@ -360,7 +441,6 @@ pub fn collect_orphan_skills(home: &Path) -> anyhow::Result<usize> {
         .unwrap_or_default();
 
     let entries = registry(home);
-    let backup_dir = home.join(".agents").join("backups");
     let mut collected = 0usize;
 
     for entry in &entries {
@@ -403,8 +483,7 @@ pub fn collect_orphan_skills(home: &Path) -> anyhow::Result<usize> {
             collected += 1;
             eprintln!(
                 "  collected skill {} from {} -> canonical",
-                name,
-                entry.agent
+                name, entry.agent
             );
         }
     }
@@ -466,7 +545,10 @@ mod tests {
             let link = entry.skills_dir.join("test-skill");
             assert!(link.exists(), "symlink should exist for {}", entry.agent);
             assert!(
-                fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+                fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
                 "should be symlink for {}",
                 entry.agent
             );
@@ -493,12 +575,10 @@ mod tests {
         assert!(fixed > 0);
 
         // Verify it's now a symlink
-        assert!(
-            fs::symlink_metadata(&claude_skill)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        assert!(fs::symlink_metadata(&claude_skill)
+            .unwrap()
+            .file_type()
+            .is_symlink());
 
         // Verify backup was created
         let backup_dir = home.join(".agents").join("backups");
@@ -525,6 +605,74 @@ mod tests {
         // Second heal should be no-op
         let fixed2 = heal_all(&home).unwrap();
         assert_eq!(fixed2, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_heal_imports_opencode_command_as_codex_skill() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let commands_dir = home.join(".config").join("opencode").join("commands");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::write(
+            commands_dir.join("cook.md"),
+            "---\ndescription: Full cook cycle\nagent: build\n---\n\nRun the cook workflow.",
+        )
+        .unwrap();
+
+        let fixed = heal_all(&home).unwrap();
+
+        let canonical_skill = canonical_skills_dir(&home).join("cook").join("SKILL.md");
+        let codex_link = home.join(".codex").join("skills").join("cook");
+        let skill_markdown = fs::read_to_string(&canonical_skill).unwrap();
+
+        assert!(fixed > 0, "expected imported command to be linked");
+        assert!(
+            canonical_skill.exists(),
+            "canonical cook skill should exist"
+        );
+        assert!(
+            skill_markdown.contains("name: cook"),
+            "import should add missing skill name"
+        );
+        assert!(
+            fs::symlink_metadata(&codex_link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "codex should receive a symlink to the imported command skill"
+        );
+        assert_eq!(
+            fs::read_link(codex_link).unwrap(),
+            canonical_skills_dir(&home).join("cook")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_heal_continues_when_opencode_commands_cannot_be_scanned() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let canonical = canonical_skills_dir(&home);
+        let skill_dir = canonical.join("still-heals");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Test").unwrap();
+
+        let opencode_dir = home.join(".config").join("opencode");
+        fs::create_dir_all(&opencode_dir).unwrap();
+        fs::write(opencode_dir.join("commands"), "not a directory").unwrap();
+
+        let fixed = heal_all(&home).unwrap();
+        let codex_link = home.join(".codex").join("skills").join("still-heals");
+
+        assert!(fixed > 0, "canonical skill should still be linked");
+        assert!(
+            fs::symlink_metadata(&codex_link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "codex should still receive canonical skills"
+        );
     }
 
     #[test]
