@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
-use toml_edit::{DocumentMut, InlineTable, value, table as tbl_value, Item};
+use toml_edit::{table as tbl_value, value, DocumentMut, InlineTable, Item};
 
 use crate::shared::models::{SyncTransaction, TransactionStatus};
 
@@ -27,8 +27,7 @@ pub fn load_cache() -> Result<Vec<SyncTransaction>> {
     let mut transactions = Vec::new();
     if let Some(txns_table) = doc.get("transactions").and_then(|t| t.as_table()) {
         for (tx_id, entry) in txns_table.iter() {
-            if let Some(table) = entry.as_table() {
-                let tx = parse_transaction_table(tx_id, table);
+            if let Some(tx) = parse_transaction_item(tx_id, entry) {
                 transactions.push(tx);
             }
         }
@@ -36,7 +35,57 @@ pub fn load_cache() -> Result<Vec<SyncTransaction>> {
     Ok(transactions)
 }
 
+fn parse_transaction_item(id: &str, item: &Item) -> Option<SyncTransaction> {
+    if let Some(table) = item.as_table() {
+        return Some(parse_transaction_table(id, table));
+    }
+
+    item.as_inline_table()
+        .map(|inline| parse_transaction_inline(id, inline))
+}
+
 fn parse_transaction_table(id: &str, table: &toml_edit::Table) -> SyncTransaction {
+    SyncTransaction {
+        id: id.to_string(),
+        timestamp: table
+            .get("timestamp")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0),
+        agent: table
+            .get("agent")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        target_path: table
+            .get("target_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        backup_path: table
+            .get("backup_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        checksum_before: table
+            .get("checksum_before")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        checksum_after: table
+            .get("checksum_after")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        status: match table.get("status").and_then(|v| v.as_str()) {
+            Some("pending") => TransactionStatus::Pending,
+            Some("committed") => TransactionStatus::Committed,
+            Some("rolled_back") => TransactionStatus::RolledBack,
+            _ => TransactionStatus::Pending,
+        },
+    }
+}
+
+fn parse_transaction_inline(id: &str, table: &InlineTable) -> SyncTransaction {
     SyncTransaction {
         id: id.to_string(),
         timestamp: table
@@ -122,6 +171,20 @@ fn set_str_field(table: &mut toml_edit::Table, key: &str, val: &str) {
     table.insert(key, value(val));
 }
 
+fn set_transaction_str_field(entry: &mut Item, key: &str, val: &str) -> Result<()> {
+    if let Some(table) = entry.as_table_mut() {
+        set_str_field(table, key, val);
+        return Ok(());
+    }
+
+    if let Some(inline) = entry.as_inline_table_mut() {
+        inline.insert(key, val.into());
+        return Ok(());
+    }
+
+    bail!("Transaction entry is not a table")
+}
+
 /// Update the status of a specific transaction in the cache.
 pub fn update_transaction_status(id: &str, status: TransactionStatus) -> Result<()> {
     let path = cache_path()?;
@@ -141,11 +204,8 @@ pub fn update_transaction_status(id: &str, status: TransactionStatus) -> Result<
 
     if let Some(txns) = doc.get_mut("transactions").and_then(|t| t.as_table_mut()) {
         if let Some(tx_entry) = txns.get_mut(id) {
-            if let Some(table) = tx_entry.as_table_mut() {
-                set_str_field(table, "status", status_str);
-            } else {
-                bail!("Transaction entry '{}' is not a table", id);
-            }
+            set_transaction_str_field(tx_entry, "status", status_str)
+                .with_context(|| format!("Transaction entry '{}' is not a table", id))?;
         } else {
             bail!("Transaction '{}' not found in cache", id);
         }
@@ -170,11 +230,8 @@ pub fn update_checksum_after(id: &str, checksum: &str) -> Result<()> {
 
     if let Some(txns) = doc.get_mut("transactions").and_then(|t| t.as_table_mut()) {
         if let Some(tx_entry) = txns.get_mut(id) {
-            if let Some(table) = tx_entry.as_table_mut() {
-                set_str_field(table, "checksum_after", checksum);
-            } else {
-                bail!("Transaction entry '{}' is not a table", id);
-            }
+            set_transaction_str_field(tx_entry, "checksum_after", checksum)
+                .with_context(|| format!("Transaction entry '{}' is not a table", id))?;
         } else {
             bail!("Transaction '{}' not found in cache", id);
         }
@@ -193,4 +250,43 @@ pub fn clear_cache() -> Result<()> {
         fs::remove_file(&path).context("Failed to remove cache.toml")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inline_transaction() -> Item {
+        let mut inline = InlineTable::new();
+        inline.insert("timestamp", 42.into());
+        inline.insert("agent", "Codex".into());
+        inline.insert("target_path", "/tmp/codex.toml".into());
+        inline.insert("backup_path", "/tmp/codex.bak".into());
+        inline.insert("checksum_before", "before".into());
+        inline.insert("checksum_after", "".into());
+        inline.insert("status", "pending".into());
+        Item::Value(toml_edit::Value::InlineTable(inline))
+    }
+
+    #[test]
+    fn parses_saved_inline_transaction_entries() {
+        let tx = parse_transaction_item("tx-1", &inline_transaction()).unwrap();
+
+        assert_eq!(tx.id, "tx-1");
+        assert_eq!(tx.agent, "Codex");
+        assert_eq!(tx.timestamp, 42);
+        assert_eq!(tx.status, TransactionStatus::Pending);
+    }
+
+    #[test]
+    fn updates_saved_inline_transaction_entries() {
+        let mut entry = inline_transaction();
+
+        set_transaction_str_field(&mut entry, "checksum_after", "after").unwrap();
+        set_transaction_str_field(&mut entry, "status", "committed").unwrap();
+
+        let tx = parse_transaction_item("tx-1", &entry).unwrap();
+        assert_eq!(tx.checksum_after, "after");
+        assert_eq!(tx.status, TransactionStatus::Committed);
+    }
 }
