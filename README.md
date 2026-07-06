@@ -87,7 +87,7 @@ src/
 ├── instructions/
 │   └── mod.rs           # Instruction symlink healing (AGENTS.md -> CLAUDE.md, etc.)
 ├── rules/
-│   └── mod.rs           # AGENTS.md → Cursor .mdc + Claude .md rule files (path-scoped)
+│   └── mod.rs           # AGENTS.md → Cursor .mdc + Claude .md rule files (path-scoped, 16 tests)
 ├── mcp/
 │   ├── mod.rs
 │   ├── factory.rs       # AgentRegistry + McpFormatFactory

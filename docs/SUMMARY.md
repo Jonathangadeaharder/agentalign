@@ -42,7 +42,7 @@ Rust CLI for AI agent config unification (MCP, agents, instructions, skills, rul
 - `src/tracking/keychain.rs` — `store_secret()`, `get_secret()`, `delete_secret()`, `resolve_secret()` (keychain → local fallback).
 - `src/tracking/mod.rs` — `SecretVault` trait, `OsKeyringVault`, `InMemoryVault`.
 - `src/instructions/mod.rs` — `heal_all()`, `heal_one()`, `verify_all()`. 6 agents: opencode, claude, gemini, codex, zcode, grok.
-- `src/rules/mod.rs` — `sync_rules()`, `cursor_rules_dir()`, `claude_rules_dir()`. 14 tests. Splits AGENTS.md sections into Cursor `.mdc` + Claude `.md` rule files.
+- `src/rules/mod.rs` — `sync_rules()`, `cursor_rules_dir()`, `claude_rules_dir()`. 16 tests. Splits AGENTS.md sections into Cursor `.mdc` + Claude `.md` rule files.
 - `src/skills/mod.rs` — `heal_all()`, `heal_one()`. 6 agents: claude, gemini, codex, cursor, opencode, grok.
 - `src/watch.rs` — `run_daemon()`. Bidirectional sync with `process_changes()`, `sync_all_agents()`, `sync_selected_agents()`.
 - `src/magic.rs` — `enable()`, `disable()`, `status()`. LaunchAgent plist generation + launchctl bootstrap.
