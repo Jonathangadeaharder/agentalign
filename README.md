@@ -45,14 +45,12 @@ agentalign watch                            # Run the file watcher daemon
 |-------|-----------|--------|
 | Claude | `~/.claude/.mcp.json` | JSON (claude-derived) |
 | Cursor | `~/.cursor/mcp.json` | JSON (claude-derived, `is_cursor` flag) |
-| VS Code | User settings JSON | JSON (env-section) |
-| Copilot | GitHub Copilot config | JSON (`$VAR` placeholders) |
-| Windsurf | Windsurf config | JSON (security sandbox) |
-| Zed | Zed settings | JSON (env-section) |
 | Gemini | `~/.gemini/config/mcp_config.json` | JSON (`$VAR` placeholders) |
 | Codex | `~/.codex/config.toml` | TOML (restricted key chars) |
 | OpenCode | `~/.config/opencode/opencode.json` | JSON (canonical format) |
 | Antigravity | `~/.gemini/antigravity/mcp_config.json` | JSON |
+| ZCode | `~/.zcode/cli/config.json` | JSON (nested `mcp.servers`) |
+| Grok | `~/.grok/config.toml` | TOML (Codex-style with `enabled` + `headers`) |
 
 ## Key Features
 
@@ -62,6 +60,7 @@ agentalign watch                            # Run the file watcher daemon
 - **Environment interpolation**: normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
 - **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source. Agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
 - **Skills directory syncing**: `~/.agents/skills/` is the canonical source. Per-agent skill dirs are symlinked.
+- **Rules generation**: splits `~/.agents/AGENTS.md` into path-scoped Cursor `.mdc` and Claude `.md` rule files, regenerated on every `sync` and on AGENTS.md changes via `watch`.
 - **Magic mode**: installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
 - **Local entries protection**: `~/.agents/local_entries.json` preserves user-added keys during sync.
 - **Per-agent skip list**: `~/.agents/agent_skip.json` prevents specific servers from being pushed to specific agents.
@@ -83,9 +82,12 @@ src/
 │   ├── cursor.rs        # CursorAgentStrategy: same format as Claude, no `color`
 │   ├── gemini.rs        # GeminiAgentStrategy: Agy customAgent JSON format
 │   ├── opencode.rs      # OpenCodeAgentStrategy: same format as Claude
-│   └── zcode.rs         # ZCodeAgentStrategy: disallowedTools from permission
+│   ├── zcode.rs         # ZCodeAgentStrategy: disallowedTools from permission
+│   └── grok.rs          # GrokAgentStrategy: same format as Claude
 ├── instructions/
 │   └── mod.rs           # Instruction symlink healing (AGENTS.md -> CLAUDE.md, etc.)
+├── rules/
+│   └── mod.rs           # AGENTS.md → Cursor .mdc + Claude .md rule files (path-scoped)
 ├── mcp/
 │   ├── mod.rs
 │   ├── factory.rs       # AgentRegistry + McpFormatFactory
@@ -102,7 +104,9 @@ src/
 │   ├── gemini.rs        # Gemini strategy
 │   ├── codex.rs         # Codex CLI (TOML) strategy
 │   ├── opencode.rs      # OpenCode strategy
-│   └── antigravity.rs   # Antigravity strategy
+│   ├── antigravity.rs   # Antigravity strategy
+│   ├── zcode.rs         # ZCode strategy (nested `mcp.servers`)
+│   └── grok.rs          # Grok strategy (TOML, Codex-style)
 ├── migration/
 │   ├── mod.rs
 │   ├── secret_splitter.rs  # Extract sensitive fields -> keychain placeholders
