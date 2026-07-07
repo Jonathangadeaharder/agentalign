@@ -86,10 +86,7 @@ impl AgentManifest {
     }
 
     fn synced_names(&self, agent_type: &str) -> HashSet<String> {
-        self.entries
-            .get(agent_type)
-            .cloned()
-            .unwrap_or_default()
+        self.entries.get(agent_type).cloned().unwrap_or_default()
     }
 }
 
@@ -119,15 +116,18 @@ pub fn sync_agents(home: &Path, dry_run: bool) -> anyhow::Result<usize> {
             continue;
         }
 
-        std::fs::create_dir_all(&agents_dir)?;
+        ensure_dir_all(&agents_dir)?;
 
         for agent in &agents {
             let output = strategy.format_agent(agent)?;
             let target = strategy.agent_target_path(&agents_dir, &agent.name);
 
-            // Ensure parent directory exists (some strategies use nested paths)
+            // Ensure parent directory exists (some strategies use nested paths).
+            // ensure_dir_all also clears broken symlinks left behind when an
+            // agent has no matching skill directory (e.g. ~/.codex/skills/<name>
+            // pointing at a missing ~/.agents/skills/<name>).
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
+                ensure_dir_all(parent)?;
             }
 
             if target.exists() {
@@ -180,4 +180,109 @@ pub fn sync_agents(home: &Path, dry_run: bool) -> anyhow::Result<usize> {
     }
 
     Ok(synced)
+}
+
+/// Like `std::fs::create_dir_all`, but transparently removes broken symlinks
+/// that block directory creation.
+///
+/// `create_dir_all` fails with `AlreadyExists` when an ancestor of `path` is
+/// a dangling symlink: it tries `create_dir(ancestor)`, gets `EEXIST`, then
+/// cannot `metadata` the link to confirm it is a directory, so it returns the
+/// error. This happens in agent sync when an agent has a canonical `.md`
+/// definition but no matching skill directory — `~/.codex/skills/<name>` is
+/// a symlink to a missing `~/.agents/skills/<name>`, and writing
+/// `<name>/agents/openai.yaml` inside it fails.
+///
+/// We walk up `path`'s ancestors, remove any dangling symlinks, then retry.
+/// Real directories and valid symlinks are left untouched.
+fn ensure_dir_all(path: &Path) -> std::io::Result<()> {
+    match std::fs::create_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(first) => {
+            let mut fixed = false;
+            let mut cur = Some(path);
+            while let Some(p) = cur {
+                if is_broken_symlink(p) {
+                    std::fs::remove_file(p)?;
+                    fixed = true;
+                }
+                cur = p.parent();
+            }
+            if fixed {
+                std::fs::create_dir_all(path)
+            } else {
+                Err(first)
+            }
+        }
+    }
+}
+
+fn is_broken_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok() && std::fs::metadata(path).is_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_dir_all;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// Helper: create a broken symlink at `<root>/link` pointing to a
+    /// nonexistent `<root>/missing`.
+    fn make_broken_symlink(root: &Path, name: &str) -> std::path::PathBuf {
+        let target = root.join("missing");
+        let link = root.join(name);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        link
+    }
+
+    #[test]
+    fn test_ensure_dir_all_creates_missing_dir() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("a").join("b");
+        ensure_dir_all(&path).unwrap();
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn test_ensure_dir_all_handles_broken_symlink_ancestor() {
+        // Reproduces the production bug: a broken symlink sits where agentalign
+        // needs to create a directory (e.g. ~/.codex/skills/<agent>/agents
+        // when ~/.codex/skills/<agent> is a dangling symlink).
+        let tmp = TempDir::new().unwrap();
+        let skills = tmp.path().join("codex").join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+
+        // Broken symlink: skills/vision -> skills/missing (missing does not
+        // exist).
+        make_broken_symlink(&skills, "vision");
+
+        let target = skills.join("vision").join("agents");
+        // Before the fix this returned AlreadyExists (os error 17).
+        ensure_dir_all(&target)
+            .expect("ensure_dir_all should remove the broken symlink and create the dir");
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn test_ensure_dir_all_preserves_valid_symlink_to_dir() {
+        let tmp = TempDir::new().unwrap();
+        let skills = tmp.path().join("codex").join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+
+        // Valid symlink: skills/designer -> skills/real_designer (exists).
+        let real = skills.join("real_designer");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = skills.join("designer");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let target = link.join("agents");
+        ensure_dir_all(&target).unwrap();
+        assert!(target.is_dir());
+        // Symlink must still be a symlink, not replaced.
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
 }
