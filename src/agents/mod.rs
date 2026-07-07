@@ -218,7 +218,10 @@ fn ensure_dir_all(path: &Path) -> std::io::Result<()> {
 }
 
 fn is_broken_symlink(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok() && std::fs::metadata(path).is_err()
+    std::fs::symlink_metadata(path).is_ok()
+        && std::fs::metadata(path)
+            .err()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
 #[cfg(test)]
@@ -229,6 +232,7 @@ mod tests {
 
     /// Helper: create a broken symlink at `<root>/link` pointing to a
     /// nonexistent `<root>/missing`.
+    #[cfg(unix)]
     fn make_broken_symlink(root: &Path, name: &str) -> std::path::PathBuf {
         let target = root.join("missing");
         let link = root.join(name);
@@ -244,6 +248,7 @@ mod tests {
         assert!(path.is_dir());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_ensure_dir_all_handles_broken_symlink_ancestor() {
         // Reproduces the production bug: a broken symlink sits where agentalign
@@ -264,6 +269,7 @@ mod tests {
         assert!(target.is_dir());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_ensure_dir_all_preserves_valid_symlink_to_dir() {
         let tmp = TempDir::new().unwrap();
