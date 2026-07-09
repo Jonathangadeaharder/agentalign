@@ -24,12 +24,12 @@ pub struct GrokAgentStrategy;
 /// MCP tool names (e.g. `svelte_list-sections`) pass through unchanged.
 fn translate_tool(name: &str) -> &str {
     match name {
-        "Read" => "read_file",
-        "Edit" | "Write" => "search_replace",
-        "Grep" => "grep",
-        "Glob" => "list_dir",
-        "Bash" => "run_terminal_command",
-        "WebFetch" => "web_fetch",
+        "Read" | "read" => "read_file",
+        "Edit" | "edit" | "Write" | "write" => "search_replace",
+        "Grep" | "grep" => "grep",
+        "Glob" | "glob" => "list_dir",
+        "Bash" | "bash" => "run_terminal_command",
+        "WebFetch" | "webfetch" | "web_fetch" => "web_fetch",
         other => other,
     }
 }
@@ -93,10 +93,20 @@ impl SubagentStrategy for GrokAgentStrategy {
         // Map canonical permission {edit, bash} → disallowedTools as a YAML
         // array of Grok-native tool names. String format is silently ignored.
         let mut disallowed: Vec<&str> = Vec::new();
-        if agent.frontmatter.permission.edit == "deny" {
+        if agent
+            .frontmatter
+            .permission
+            .edit
+            .eq_ignore_ascii_case("deny")
+        {
             disallowed.push("search_replace");
         }
-        if agent.frontmatter.permission.bash == "deny" {
+        if agent
+            .frontmatter
+            .permission
+            .bash
+            .eq_ignore_ascii_case("deny")
+        {
             disallowed.push("run_terminal_command");
         }
         if !disallowed.is_empty() {
@@ -240,6 +250,35 @@ mod tests {
         let output = strategy.format_agent(&agent).unwrap();
 
         assert!(output.contains("- svelte_list-sections"));
+    }
+
+    #[test]
+    fn test_grok_translates_lowercase_tool_names() {
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "allow".to_string();
+        agent.frontmatter.permission.bash = "allow".to_string();
+        agent.frontmatter.tools = vec!["read".to_string(), "edit".to_string()];
+        let strategy = GrokAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(output.contains("- read_file"));
+        assert!(output.contains("- search_replace"));
+    }
+
+    #[test]
+    fn test_grok_case_insensitive_permission_deny() {
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "Deny".to_string();
+        agent.frontmatter.permission.bash = "DENY".to_string();
+        agent.frontmatter.tools = vec![];
+        let strategy = GrokAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(output.contains("- search_replace"), "Deny should deny edit");
+        assert!(
+            output.contains("- run_terminal_command"),
+            "DENY should deny bash"
+        );
     }
 
     #[test]
