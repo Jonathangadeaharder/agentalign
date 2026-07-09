@@ -11,8 +11,28 @@ use std::path::Path;
 /// model, tools, disallowedTools, color) plus `agents_md: true` which tells
 /// Grok to load AGENTS.md context for the subagent.
 ///
+/// Unlike Claude Code (which accepts comma-separated strings), Grok requires
+/// `tools` and `disallowedTools` as YAML arrays and uses its own built-in
+/// tool names (e.g. `search_replace` not `Edit`, `run_terminal_command` not
+/// `Bash`). String values are silently ignored, so permissions would be lost
+/// without the translation below.
+///
 /// Agent files live at `~/.grok/agents/*.md`.
 pub struct GrokAgentStrategy;
+
+/// Translate a canonical (Claude Code-style) tool name to its Grok equivalent.
+/// MCP tool names (e.g. `svelte_list-sections`) pass through unchanged.
+fn translate_tool(name: &str) -> &str {
+    match name {
+        "Read" => "read_file",
+        "Edit" | "Write" => "search_replace",
+        "Grep" => "grep",
+        "Glob" => "list_dir",
+        "Bash" => "run_terminal_command",
+        "WebFetch" => "web_fetch",
+        other => other,
+    }
+}
 
 impl SubagentStrategy for GrokAgentStrategy {
     fn agent_type(&self) -> AgentType {
@@ -44,10 +64,22 @@ impl SubagentStrategy for GrokAgentStrategy {
         }
 
         if !agent.frontmatter.tools.is_empty() {
-            let tools_str = agent.frontmatter.tools.join(", ");
+            // Translate canonical names and dedup in order: multiple canonical
+            // names (Edit + Write) collapse to one Grok name (search_replace).
+            let mut seen: Vec<&str> = Vec::new();
+            for t in &agent.frontmatter.tools {
+                let g = translate_tool(t.as_str());
+                if !seen.contains(&g) {
+                    seen.push(g);
+                }
+            }
             frontmatter.insert(
                 YamlValue::String("tools".into()),
-                YamlValue::String(tools_str),
+                YamlValue::Sequence(
+                    seen.iter()
+                        .map(|s| YamlValue::String((*s).into()))
+                        .collect(),
+                ),
             );
         }
 
@@ -58,28 +90,29 @@ impl SubagentStrategy for GrokAgentStrategy {
             );
         }
 
-        // Map canonical permission {edit, bash} → disallowedTools.
-        // Grok is Claude Code-compatible (--deny = --disallowedTools).
+        // Map canonical permission {edit, bash} → disallowedTools as a YAML
+        // array of Grok-native tool names. String format is silently ignored.
         let mut disallowed: Vec<&str> = Vec::new();
         if agent.frontmatter.permission.edit == "deny" {
-            disallowed.push("Edit");
-            disallowed.push("Write");
+            disallowed.push("search_replace");
         }
         if agent.frontmatter.permission.bash == "deny" {
-            disallowed.push("Bash");
+            disallowed.push("run_terminal_command");
         }
         if !disallowed.is_empty() {
             frontmatter.insert(
                 YamlValue::String("disallowedTools".into()),
-                YamlValue::String(disallowed.join(", ")),
+                YamlValue::Sequence(
+                    disallowed
+                        .iter()
+                        .map(|s| YamlValue::String((*s).into()))
+                        .collect(),
+                ),
             );
         }
 
         // Grok-specific: load AGENTS.md context for this subagent.
-        frontmatter.insert(
-            YamlValue::String("agents_md".into()),
-            YamlValue::Bool(true),
-        );
+        frontmatter.insert(YamlValue::String("agents_md".into()), YamlValue::Bool(true));
 
         let yaml_str = serde_yaml::to_string(&frontmatter)?;
         let yaml_trimmed = yaml_str.trim_end_matches('\n');
@@ -105,7 +138,7 @@ mod tests {
                     edit: "deny".to_string(),
                     bash: "deny".to_string(),
                 },
-                tools: vec!["read_file".to_string(), "grep_search".to_string()],
+                tools: vec!["Read".to_string(), "Grep".to_string()],
                 color: Some("blue".to_string()),
                 extra: HashMap::new(),
             },
@@ -123,9 +156,15 @@ mod tests {
         assert!(output.contains("name: vision"));
         assert!(output.contains("description: Vision agent"));
         assert!(output.contains("model: kimi-k2.6"));
-        assert!(output.contains("tools: read_file, grep_search"));
+        // tools must be a YAML array, not a comma string.
+        assert!(output.contains("tools:\n- read_file"));
+        assert!(output.contains("- grep"));
+        assert!(!output.contains("tools: read_file"));
         assert!(output.contains("color: blue"));
-        assert!(output.contains("disallowedTools: Edit, Write, Bash"));
+        // disallowedTools must be a YAML array with grok-native names.
+        assert!(output.contains("disallowedTools:\n- search_replace"));
+        assert!(output.contains("- run_terminal_command"));
+        assert!(!output.contains("disallowedTools: Edit"));
         assert!(output.contains("agents_md: true"));
         assert!(output.contains("You are a vision agent."));
     }
@@ -145,6 +184,62 @@ mod tests {
         );
         // agents_md should always be present
         assert!(output.contains("agents_md: true"));
+    }
+
+    #[test]
+    fn test_grok_translates_claude_tool_names() {
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "allow".to_string();
+        agent.frontmatter.permission.bash = "allow".to_string();
+        agent.frontmatter.tools = vec![
+            "Read".to_string(),
+            "Edit".to_string(),
+            "Write".to_string(),
+            "Grep".to_string(),
+            "Glob".to_string(),
+            "Bash".to_string(),
+            "WebFetch".to_string(),
+        ];
+        let strategy = GrokAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(output.contains("- read_file"));
+        assert!(output.contains("- search_replace"));
+        assert!(output.contains("- grep"));
+        assert!(output.contains("- list_dir"));
+        assert!(output.contains("- run_terminal_command"));
+        assert!(output.contains("- web_fetch"));
+        // Claude Code names must not leak through.
+        assert!(!output.contains("- Read"));
+        assert!(!output.contains("- Edit"));
+        assert!(!output.contains("- Bash"));
+        assert!(!output.contains("- WebFetch"));
+    }
+
+    #[test]
+    fn test_grok_dedups_collapsed_tool_names() {
+        // Edit + Write both map to search_replace — emit only one.
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "allow".to_string();
+        agent.frontmatter.permission.bash = "allow".to_string();
+        agent.frontmatter.tools = vec!["Edit".to_string(), "Write".to_string()];
+        let strategy = GrokAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        let count = output.matches("- search_replace").count();
+        assert_eq!(count, 1, "duplicate tool names must be deduped: {}", output);
+    }
+
+    #[test]
+    fn test_grok_passes_through_mcp_tool_names() {
+        let mut agent = make_agent();
+        agent.frontmatter.permission.edit = "allow".to_string();
+        agent.frontmatter.permission.bash = "allow".to_string();
+        agent.frontmatter.tools = vec!["svelte_list-sections".to_string()];
+        let strategy = GrokAgentStrategy;
+        let output = strategy.format_agent(&agent).unwrap();
+
+        assert!(output.contains("- svelte_list-sections"));
     }
 
     #[test]
