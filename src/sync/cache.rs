@@ -66,6 +66,7 @@ fn parse_transaction_table(id: &str, table: &toml_edit::Table) -> SyncTransactio
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        existed: table.get("existed").and_then(|v| v.as_bool()).unwrap_or(true),
         checksum_before: table
             .get("checksum_before")
             .and_then(|v| v.as_str())
@@ -107,6 +108,7 @@ fn parse_transaction_inline(id: &str, table: &InlineTable) -> SyncTransaction {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        existed: table.get("existed").and_then(|v| v.as_bool()).unwrap_or(true),
         checksum_before: table
             .get("checksum_before")
             .and_then(|v| v.as_str())
@@ -150,6 +152,7 @@ pub fn save_transaction(tx: &SyncTransaction) -> Result<()> {
     inline.insert("agent", tx.agent.as_str().into());
     inline.insert("target_path", tx.target_path.as_str().into());
     inline.insert("backup_path", tx.backup_path.as_str().into());
+    inline.insert("existed", tx.existed.into());
     inline.insert("checksum_before", tx.checksum_before.as_str().into());
     inline.insert("checksum_after", tx.checksum_after.as_str().into());
     let status_str = match tx.status {
@@ -262,6 +265,7 @@ mod tests {
         inline.insert("agent", "Codex".into());
         inline.insert("target_path", "/tmp/codex.toml".into());
         inline.insert("backup_path", "/tmp/codex.bak".into());
+        inline.insert("existed", true.into());
         inline.insert("checksum_before", "before".into());
         inline.insert("checksum_after", "".into());
         inline.insert("status", "pending".into());

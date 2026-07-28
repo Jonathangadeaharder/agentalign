@@ -90,9 +90,20 @@ pub struct SyncTransaction {
     pub agent: String,
     pub target_path: String,
     pub backup_path: String,
+    /// Whether the target file existed before this sync ran. Recorded
+    /// explicitly (rather than inferred from an empty checksum) so rollback
+    /// can distinguish "created a new file" from "overwrote an empty file".
+    #[serde(default = "default_existed")]
+    pub existed: bool,
     pub checksum_before: String,
     pub checksum_after: String,
     pub status: TransactionStatus,
+}
+
+/// Legacy cache entries predate the `existed` field; assume the target
+/// existed so rollback restores rather than deletes.
+fn default_existed() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
