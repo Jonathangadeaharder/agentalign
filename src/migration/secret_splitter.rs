@@ -2,13 +2,51 @@ use crate::shared::models::SecretMapping;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-const SENSITIVE_KEYWORDS: &[&str] = &["key", "secret", "token", "password", "api", "auth"];
+/// Whole tokens that mark a field as sensitive. Matching is done on whole
+/// tokens (see `tokenize`) rather than substrings, so ordinary names like
+/// `author`, `monkey`, `capital`, or `api_url` are not treated as secrets.
+/// `api` is deliberately absent: it only counts as sensitive when paired with
+/// `key` (e.g. `api_key`/`apikey`), which the `key`/`apikey` tokens cover.
+const SENSITIVE_TOKENS: &[&str] =
+    &["key", "apikey", "secret", "token", "password", "auth", "authorization"];
 const PLACEHOLDER_PREFIX: &str = "ENV_AGENTALIGN_SECRET_";
 
-/// Check if a field name contains any sensitive keyword (case-insensitive).
+/// Split a field name into lowercase tokens on `_`/`-` separators and
+/// camelCase boundaries (e.g. `openai_api_key` → `[openai, api, key]`,
+/// `apiKey` → `[api, key]`, `Authorization` → `[authorization]`).
+fn tokenize(name: &str) -> Vec<String> {
+    name.split(['_', '-']).flat_map(split_camel).collect()
+}
+
+/// Split a separator-free segment on camelCase boundaries, lowercasing each
+/// token. Handles acronym runs so `APIKey` → `[api, key]`.
+fn split_camel(segment: &str) -> Vec<String> {
+    let chars: Vec<char> = segment.chars().collect();
+    let mut tokens = Vec::new();
+    let mut start = 0usize;
+    for i in 1..chars.len() {
+        let prev = chars[i - 1];
+        let cur = chars[i];
+        let next = chars.get(i + 1).copied();
+        let boundary = (prev.is_lowercase() && cur.is_uppercase())
+            || (prev.is_uppercase()
+                && cur.is_uppercase()
+                && next.is_some_and(|n| n.is_lowercase()));
+        if boundary {
+            tokens.push(chars[start..i].iter().collect::<String>().to_lowercase());
+            start = i;
+        }
+    }
+    tokens.push(chars[start..].iter().collect::<String>().to_lowercase());
+    tokens
+}
+
+/// Check if a field name is sensitive by comparing its whole tokens against
+/// `SENSITIVE_TOKENS` (case-insensitive).
 fn is_sensitive_field(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    SENSITIVE_KEYWORDS.iter().any(|kw| lower.contains(kw))
+    tokenize(name)
+        .iter()
+        .any(|token| SENSITIVE_TOKENS.contains(&token.as_str()))
 }
 
 /// Generate a deterministic placeholder suffix from a value.
@@ -190,6 +228,49 @@ mod tests {
         assert!(!is_sensitive_field("description"));
         assert!(!is_sensitive_field("enabled"));
         assert!(!is_sensitive_field("command"));
+    }
+
+    #[test]
+    fn test_is_sensitive_field_matches_whole_tokens_only() {
+        // Regression: the old substring heuristic matched these ordinary names.
+        assert!(!is_sensitive_field("author"));
+        assert!(!is_sensitive_field("monkey"));
+        assert!(!is_sensitive_field("api_url"));
+        assert!(!is_sensitive_field("capital"));
+        assert!(!is_sensitive_field("keyboard"));
+        assert!(!is_sensitive_field("turkey"));
+        assert!(!is_sensitive_field("tokenizer"));
+        // Whole-token and camelCase variants of real secrets still match.
+        assert!(is_sensitive_field("apiKey"));
+        assert!(is_sensitive_field("APIKey"));
+        assert!(is_sensitive_field("apikey"));
+        assert!(is_sensitive_field("authToken"));
+        assert!(is_sensitive_field("client-secret"));
+    }
+
+    #[test]
+    fn test_split_ignores_false_positive_fields() {
+        let value = json!({
+            "author": "Jane",
+            "monkey": "🐒",
+            "api_url": "https://api.example.com",
+            "capital": "Paris",
+            "api_key": "sk-real"
+        });
+
+        let result = split_secrets(&value, "opencode", &[]);
+
+        assert_eq!(result.secrets.len(), 1, "only api_key is a secret");
+        assert_eq!(result.secrets[0].original_path, vec!["api_key"]);
+        // Non-sensitive values pass through untouched.
+        assert_eq!(result.sanitized["author"], "Jane");
+        assert_eq!(result.sanitized["monkey"], "🐒");
+        assert_eq!(result.sanitized["api_url"], "https://api.example.com");
+        assert_eq!(result.sanitized["capital"], "Paris");
+        assert!(result.sanitized["api_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("${ENV_AGENTALIGN_SECRET_"));
     }
 
     #[test]
