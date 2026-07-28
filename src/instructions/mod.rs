@@ -415,7 +415,7 @@ mod tests {
 
         let result = heal_one(&home, "claude");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
