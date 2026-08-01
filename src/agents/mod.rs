@@ -12,6 +12,7 @@ pub mod cursor;
 pub mod gemini;
 pub mod grok;
 pub mod opencode;
+pub mod qwen;
 pub mod zcode;
 
 pub trait SubagentStrategy {
@@ -44,6 +45,7 @@ impl SubagentRegistry {
             Box::new(cursor::CursorAgentStrategy),
             Box::new(zcode::ZCodeAgentStrategy),
             Box::new(grok::GrokAgentStrategy),
+            Box::new(qwen::QwenAgentStrategy),
         ]
     }
 }

@@ -9,6 +9,7 @@ pub mod gemini;
 pub mod grok;
 pub mod interpolation;
 pub mod opencode;
+pub mod qwen;
 pub mod strategy;
 pub mod validation;
 pub mod vscode;

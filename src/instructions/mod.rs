@@ -2,7 +2,7 @@
 //!
 //! Maintains `~/.agents/AGENTS.md` as the single source of truth for agent
 //! instruction files. All tool-specific files (CLAUDE.md, GEMINI.md, CODEX.md,
-//! AGENTS.md) are symlinks pointing to the canonical file.
+//! QWEN.md, AGENTS.md) are symlinks pointing to the canonical file.
 //!
 //! The `verify()` and `heal()` functions detect and fix broken, missing, or
 //! regular-file-replaced symlinks. This module is called by:
@@ -50,6 +50,11 @@ fn registry(home: &Path) -> Vec<InstructionEntry> {
         InstructionEntry {
             agent: "grok",
             symlink_path: home.join(".grok").join("AGENTS.md"),
+        },
+        // Qwen Code (Gemini CLI fork) reads QWEN.md, analog of GEMINI.md.
+        InstructionEntry {
+            agent: "qwen",
+            symlink_path: home.join(".qwen").join("QWEN.md"),
         },
     ]
 }
@@ -385,7 +390,7 @@ mod tests {
 
         // None of the symlinks exist yet
         let fixed = heal_all(&home).unwrap();
-        assert_eq!(fixed, 6); // opencode, claude, gemini, codex, zcode, grok
+        assert_eq!(fixed, 7); // opencode, claude, gemini, codex, zcode, grok, qwen
 
         // Second heal should be a no-op
         let fixed2 = heal_all(&home).unwrap();
