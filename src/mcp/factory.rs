@@ -127,7 +127,7 @@ impl AgentRegistry {
                 label: "Gemini",
                 config_path: home.join(".gemini").join("config").join("mcp_config.json"),
                 instruction_path: Some(home.join(".gemini").join("GEMINI.md")),
-                skills_dir: Some(home.join(".gemini").join("skills")),
+                skills_dir: Some(home.join(".gemini").join("config").join("skills")),
             },
             AgentDescriptor {
                 agent_type: AgentType::OpenCode,
@@ -228,5 +228,21 @@ mod tests {
         assert_eq!(McpFormatFactory::from_agent(AgentType::Antigravity).target_name(), "antigravity");
         assert_eq!(McpFormatFactory::from_agent(AgentType::ZCode).target_name(), "zcode");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Grok).target_name(), "grok");
+    }
+
+    #[test]
+    fn test_gemini_skills_dir_matches_skills_sync_path() {
+        // skills/mod.rs syncs to ~/.gemini/config/skills (agy reads
+        // ~/.gemini/config/); the registry entry, consumed by the watch
+        // daemon, must point at the same directory.
+        let home = std::path::Path::new("/home/dummy");
+        let gemini = AgentRegistry::synced_agents(home)
+            .into_iter()
+            .find(|d| matches!(d.agent_type, AgentType::Gemini))
+            .expect("gemini descriptor");
+        assert_eq!(
+            gemini.skills_dir.expect("gemini skills_dir"),
+            home.join(".gemini").join("config").join("skills")
+        );
     }
 }
