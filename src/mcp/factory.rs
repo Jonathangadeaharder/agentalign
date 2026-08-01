@@ -22,6 +22,7 @@ pub enum AgentType {
     Antigravity,
     ZCode,
     Grok,
+    Qwen,
 }
 
 impl AgentType {
@@ -40,6 +41,7 @@ impl AgentType {
             AgentType::Antigravity,
             AgentType::ZCode,
             AgentType::Grok,
+            AgentType::Qwen,
         ]
     }
 
@@ -58,6 +60,7 @@ impl AgentType {
             AgentType::Antigravity => "antigravity",
             AgentType::ZCode => "zcode",
             AgentType::Grok => "grok",
+            AgentType::Qwen => "qwen",
         }
     }
 
@@ -76,6 +79,7 @@ impl AgentType {
             "antigravity" => Some(AgentType::Antigravity),
             "zcode" | "z-code" => Some(AgentType::ZCode),
             "grok" => Some(AgentType::Grok),
+            "qwen" | "qwen-code" => Some(AgentType::Qwen),
             _ => None,
         }
     }
@@ -127,7 +131,7 @@ impl AgentRegistry {
                 label: "Gemini",
                 config_path: home.join(".gemini").join("config").join("mcp_config.json"),
                 instruction_path: Some(home.join(".gemini").join("GEMINI.md")),
-                skills_dir: Some(home.join(".gemini").join("skills")),
+                skills_dir: Some(home.join(".gemini").join("config").join("skills")),
             },
             AgentDescriptor {
                 agent_type: AgentType::OpenCode,
@@ -164,6 +168,13 @@ impl AgentRegistry {
                 instruction_path: Some(home.join(".grok").join("AGENTS.md")),
                 skills_dir: Some(home.join(".grok").join("skills")),
             },
+            AgentDescriptor {
+                agent_type: AgentType::Qwen,
+                label: "Qwen",
+                config_path: home.join(".qwen").join("settings.json"),
+                instruction_path: Some(home.join(".qwen").join("QWEN.md")),
+                skills_dir: Some(home.join(".qwen").join("skills")),
+            },
         ]
     }
 
@@ -195,6 +206,7 @@ impl McpFormatFactory {
             AgentType::Antigravity => Box::new(super::antigravity::AntigravityStrategy),
             AgentType::ZCode => Box::new(super::zcode::ZCodeStrategy),
             AgentType::Grok => Box::new(super::grok::GrokStrategy),
+            AgentType::Qwen => Box::new(super::qwen::QwenStrategy::default()),
         }
     }
 
@@ -211,7 +223,7 @@ mod tests {
     #[test]
     fn test_all_agents_non_empty() {
         let strategies = McpFormatFactory::all_agents();
-        assert_eq!(strategies.len(), 12);
+        assert_eq!(strategies.len(), 13);
     }
 
     #[test]
@@ -228,5 +240,47 @@ mod tests {
         assert_eq!(McpFormatFactory::from_agent(AgentType::Antigravity).target_name(), "antigravity");
         assert_eq!(McpFormatFactory::from_agent(AgentType::ZCode).target_name(), "zcode");
         assert_eq!(McpFormatFactory::from_agent(AgentType::Grok).target_name(), "grok");
+        assert_eq!(McpFormatFactory::from_agent(AgentType::Qwen).target_name(), "qwen");
+    }
+
+    #[test]
+    fn test_qwen_from_name() {
+        assert_eq!(AgentType::from_name("qwen"), Some(AgentType::Qwen));
+        assert_eq!(AgentType::from_name("QWEN"), Some(AgentType::Qwen));
+        assert_eq!(AgentType::from_name("qwen-code"), Some(AgentType::Qwen));
+    }
+
+    #[test]
+    fn test_qwen_registry_paths() {
+        let home = std::path::Path::new("/home/dummy");
+        let qwen = AgentRegistry::synced_agents(home)
+            .into_iter()
+            .find(|d| matches!(d.agent_type, AgentType::Qwen))
+            .expect("qwen descriptor");
+        assert_eq!(qwen.config_path, home.join(".qwen").join("settings.json"));
+        assert_eq!(
+            qwen.instruction_path.expect("qwen instruction_path"),
+            home.join(".qwen").join("QWEN.md")
+        );
+        assert_eq!(
+            qwen.skills_dir.expect("qwen skills_dir"),
+            home.join(".qwen").join("skills")
+        );
+    }
+
+    #[test]
+    fn test_gemini_skills_dir_matches_skills_sync_path() {
+        // skills/mod.rs syncs to ~/.gemini/config/skills (agy reads
+        // ~/.gemini/config/); the registry entry, consumed by the watch
+        // daemon, must point at the same directory.
+        let home = std::path::Path::new("/home/dummy");
+        let gemini = AgentRegistry::synced_agents(home)
+            .into_iter()
+            .find(|d| matches!(d.agent_type, AgentType::Gemini))
+            .expect("gemini descriptor");
+        assert_eq!(
+            gemini.skills_dir.expect("gemini skills_dir"),
+            home.join(".gemini").join("config").join("skills")
+        );
     }
 }

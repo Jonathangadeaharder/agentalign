@@ -6,6 +6,7 @@
 //! - `~/.claude/skills/diagnose` → `~/.agents/skills/diagnose`
 //! - `~/.gemini/config/skills/diagnose` → `~/.agents/skills/diagnose`
 //! - `~/.codex/skills/diagnose` → `~/.agents/skills/diagnose`
+//! - `~/.qwen/skills/diagnose` → `~/.agents/skills/diagnose`
 //!
 //! Real directories (pre-agentalign) are backed up and replaced with symlinks.
 //! Called by:
@@ -63,6 +64,11 @@ fn registry(home: &Path) -> Vec<SkillsEntry> {
         SkillsEntry {
             agent: "grok",
             skills_dir: home.join(".grok").join("skills"),
+        },
+        // Qwen Code (Gemini CLI fork) reads skills from ~/.qwen/skills/.
+        SkillsEntry {
+            agent: "qwen",
+            skills_dir: home.join(".qwen").join("skills"),
         },
         // ZCode reads ~/.agents/skills natively (per the zcode-guide
         // discovery order), so it is intentionally omitted here — no
