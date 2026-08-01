@@ -44,7 +44,7 @@ const RULE_DEFS: &[RuleDef] = &[
     },
     RuleDef {
         basename: "nodejs-stack",
-        description: "Node.js/JS stack: pnpm, biome, tsc, fnm. NEVER npm/yarn/npx.",
+        description: "Node.js/JS stack: pnpm, biome, tsc, volta. NEVER npm/yarn/npx.",
         always_apply: false,
         globs: Some("**/*.{ts,js,mts,mjs,svelte,json5}"),
         section_numbers: &[3, 4],
@@ -402,7 +402,7 @@ mod tests {
         let agents_md = agents_dir.join("AGENTS.md");
         fs::write(
             &agents_md,
-            "# AI Agent Execution & Tooling Rules\n\n## 1. Git Workflow\n- NEVER push to main\n\n## 2. Python Stack\n- Use uv\n\n## 3. Node.js Stack\n- Use pnpm\n\n## 4. Node Version\n- Use fnm\n\n## 5. TDD\n- Red-green-refactor\n\n## 6. PR Resolution\n- Resolve comments\n\n## 7. Caveman Mode\n- Terse\n\n## 8. Test Review\n- Check overmocking\n\n## 9. CI/CD Protocol\n- Use gh-wait\n\n## 10. Quality Gates\n- pr-gate.yml\n\n## 11. Deployment\n- DigitalOcean\n\n## 12. Mandatory Services\n- SonarCloud\n\n## 13. Tool Management\n- Re-install after edit\n\n## 14. Cache Policy\n- Never clear pnpm cache\n\n## 15. Subagents\n- vision, python-uv\n\n## 16. Documentation Paths\n- docs/adrs/\n\n## 17. Verify Before Acting\n- Read before edit\n\n## 18. Instruction Fidelity\n- Follow steps in order\n\n## 19. Never Assume State\n- Read it first\n\n## 20. Complete Before Claiming Done\n- Implement ALL features\n\n## 21. File Search\n- Use fd/rg\n\n## 22. No Fabricated APIs\n- Read the source\n\n## 23. Honest Craftsman\n- YAGNI\n\n## 24. Structural Hygiene\n- No god packages\n",
+            "# AI Agent Execution & Tooling Rules\n\n## 1. Git Workflow\n- NEVER push to main\n\n## 2. Python Stack\n- Use uv\n\n## 3. Node.js Stack\n- Use pnpm\n\n## 4. Node Version\n- Use volta\n\n## 5. TDD\n- Red-green-refactor\n\n## 6. PR Resolution\n- Resolve comments\n\n## 7. Caveman Mode\n- Terse\n\n## 8. Test Review\n- Check overmocking\n\n## 9. CI/CD Protocol\n- Use gh-wait\n\n## 10. Quality Gates\n- pr-gate.yml\n\n## 11. Deployment\n- DigitalOcean\n\n## 12. Mandatory Services\n- SonarCloud\n\n## 13. Tool Management\n- Re-install after edit\n\n## 14. Cache Policy\n- Never clear pnpm cache\n\n## 15. Subagents\n- vision, python-uv\n\n## 16. Documentation Paths\n- docs/adrs/\n\n## 17. Verify Before Acting\n- Read before edit\n\n## 18. Instruction Fidelity\n- Follow steps in order\n\n## 19. Never Assume State\n- Read it first\n\n## 20. Complete Before Claiming Done\n- Implement ALL features\n\n## 21. File Search\n- Use fd/rg\n\n## 22. No Fabricated APIs\n- Read the source\n\n## 23. Honest Craftsman\n- YAGNI\n\n## 24. Structural Hygiene\n- No god packages\n",
         )
         .unwrap();
 

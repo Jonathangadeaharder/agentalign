@@ -230,7 +230,7 @@ static RULE_GROUPS: &[RuleGroup] = &[
     },
     RuleGroup {
         name: "nodejs-stack",
-        description: "Node.js stack: pnpm, biome, tsc, fnm. Never npm/yarn/nvm.",
+        description: "Node.js stack: pnpm, biome, tsc, volta. Never npm/yarn/nvm.",
         globs: &["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.svelte", "**/package.json", "**/tsconfig.json"],
         sections: &[3, 4],
     },
@@ -425,7 +425,7 @@ alwaysApply: false
 
 ```yaml
 ---
-description: Node.js stack: pnpm, biome, tsc, fnm. Never npm/yarn/nvm.
+description: Node.js stack: pnpm, biome, tsc, volta. Never npm/yarn/nvm.
 globs:
   - "**/*.ts"
   - "**/*.js"
@@ -444,7 +444,7 @@ alwaysApply: false
 - Ephemeral: pnpm dlx (never npx)
 - Lint/format: biome (never eslint/prettier)
 - Type check: tsc --noEmit
-- Node version: fnm (never nvm/n)
+- Node version: volta (never fnm/nvm/n)
 
 ### Rule 4: `tdd-quality.mdc`
 
