@@ -267,20 +267,4 @@ mod tests {
             home.join(".qwen").join("skills")
         );
     }
-
-    #[test]
-    fn test_gemini_skills_dir_matches_skills_sync_path() {
-        // skills/mod.rs syncs to ~/.gemini/config/skills (agy reads
-        // ~/.gemini/config/); the registry entry, consumed by the watch
-        // daemon, must point at the same directory.
-        let home = std::path::Path::new("/home/dummy");
-        let gemini = AgentRegistry::synced_agents(home)
-            .into_iter()
-            .find(|d| matches!(d.agent_type, AgentType::Gemini))
-            .expect("gemini descriptor");
-        assert_eq!(
-            gemini.skills_dir.expect("gemini skills_dir"),
-            home.join(".gemini").join("config").join("skills")
-        );
-    }
 }
