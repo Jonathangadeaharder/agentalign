@@ -1,16 +1,24 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::path::Path;
 use tempfile::TempDir;
+
+/// Point the binary's home resolution at `sandbox`.
+///
+/// `dirs::home_dir()` ignores `HOME` on Windows, so setting only `HOME` let these
+/// tests run `migrate`/`sync`/`restore` against the developer's real home.
+fn with_home<'a>(cmd: &'a mut Command, sandbox: &Path) -> &'a mut Command {
+    cmd.env("AGENTALIGN_HOME", sandbox).env("HOME", sandbox)
+}
 
 #[test]
 fn test_agentalign_restore_list_empty() {
     let sandbox = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("agentalign").unwrap();
-    let assert = cmd
+    let assert = with_home(&mut cmd, sandbox.path())
         .arg("restore")
         .arg("--list")
-        .env("HOME", sandbox.path())
         .assert();
 
     assert
@@ -24,10 +32,9 @@ fn test_agentalign_migrate_dry_run() {
 
     // No agent configs exist yet — dry run should report none found
     let mut cmd = Command::cargo_bin("agentalign").unwrap();
-    let assert = cmd
+    let assert = with_home(&mut cmd, sandbox.path())
         .arg("migrate")
         .arg("--dry-run")
-        .env("HOME", sandbox.path())
         .assert();
 
     assert
@@ -40,9 +47,8 @@ fn test_agentalign_sync_no_canonical() {
     let sandbox = TempDir::new().unwrap();
 
     let mut cmd = Command::cargo_bin("agentalign").unwrap();
-    let assert = cmd
+    let assert = with_home(&mut cmd, sandbox.path())
         .arg("sync")
-        .env("HOME", sandbox.path())
         .assert();
 
     // Sync without canonical config should fail with a helpful error
@@ -57,10 +63,9 @@ fn test_agentalign_migrate_creates_agents_dir() {
     let agents_dir = sandbox.path().join(".agents");
 
     let mut cmd = Command::cargo_bin("agentalign").unwrap();
-    let assert = cmd
+    let assert = with_home(&mut cmd, sandbox.path())
         .arg("migrate")
         .arg("--dry-run")
-        .env("HOME", sandbox.path())
         .assert();
 
     assert.success();
