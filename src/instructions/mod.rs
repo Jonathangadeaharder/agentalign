@@ -38,7 +38,7 @@ pub(crate) fn create_symlink(canonical: &Path, link: &Path) -> std::io::Result<(
 }
 
 /// Platform-specific hint appended to symlink creation failures.
-fn symlink_hint() -> &'static str {
+pub(crate) fn symlink_hint() -> &'static str {
     if cfg!(windows) {
         " (Windows requires Developer Mode or an elevated shell to create symlinks)"
     } else {
@@ -63,6 +63,21 @@ pub struct InstructionEntry {
     pub agent: &'static str,
     /// Path to the tool-specific instruction file (the symlink target).
     pub symlink_path: PathBuf,
+}
+
+/// VS Code's user prompts directory, where Copilot reads `*.instructions.md`.
+fn vscode_prompts_dir(home: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let base = home.join("AppData").join("Roaming").join("Code");
+    #[cfg(target_os = "macos")]
+    let base = home
+        .join("Library")
+        .join("Application Support")
+        .join("Code");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = home.join(".config").join("Code");
+
+    base.join("User").join("prompts")
 }
 
 /// Build the registry of instruction file symlinks.
@@ -96,6 +111,12 @@ fn registry(home: &Path) -> Vec<InstructionEntry> {
         InstructionEntry {
             agent: "qwen",
             symlink_path: home.join(".qwen").join("QWEN.md"),
+        },
+        // VS Code Copilot applies every *.instructions.md in the user prompts
+        // directory; the canonical file carries the `applyTo` frontmatter.
+        InstructionEntry {
+            agent: "copilot-vscode",
+            symlink_path: vscode_prompts_dir(home).join("agents.instructions.md"),
         },
     ]
 }
@@ -502,7 +523,7 @@ mod tests {
 
         // None of the symlinks exist yet
         let fixed = heal_all(&home).unwrap();
-        assert_eq!(fixed, 7); // opencode, claude, gemini, codex, zcode, grok, qwen
+        assert_eq!(fixed, registry(&home).len());
 
         // Second heal should be a no-op
         let fixed2 = heal_all(&home).unwrap();

@@ -13,12 +13,50 @@
 //! - `agentalign sync` (after MCP + instruction sync)
 //! - `agentalign watch` (on daemon startup and on skills dir changes)
 
-#[cfg(unix)]
-use std::os::unix;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
+use anyhow::Context;
 use chrono::Utc;
+
+/// Create a directory symlink at `link` pointing to `canonical`.
+///
+/// Windows needs `symlink_dir` plus Developer Mode or elevation.
+fn create_skill_symlink(canonical: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(canonical, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(canonical, link)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (canonical, link);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "symlinks are not supported on this platform",
+        ))
+    }
+}
+
+/// Remove a symlink that points at a directory.
+///
+/// Windows directory symlinks are removed with `remove_dir`, not `remove_file`.
+fn remove_symlink(link: &Path) -> std::io::Result<()> {
+    if link.is_dir() {
+        std::fs::remove_dir(link)
+    } else {
+        std::fs::remove_file(link)
+    }
+}
+
+/// Sibling path used to park a real directory while its symlink is created.
+fn parked_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".agentalign-old");
+    path.with_file_name(name)
+}
 
 /// Get the canonical skills directory path.
 pub fn canonical_skills_dir(home: &Path) -> PathBuf {
@@ -140,7 +178,6 @@ pub fn verify_skill(
 }
 
 /// Heal a single skill symlink. Returns true if a change was made.
-#[cfg(unix)]
 pub fn heal_skill(
     agent_skills_dir: &Path,
     skill_name: &str,
@@ -159,8 +196,7 @@ pub fn heal_skill(
             std::fs::create_dir_all(agent_skills_dir)?;
         }
         SkillState::WrongTarget { .. } => {
-            // Remove wrong symlink
-            std::fs::remove_file(&skill_path)?;
+            remove_symlink(&skill_path)?;
         }
         SkillState::ReplacedByDir => {
             // Backup the real directory/file before replacing with symlink
@@ -190,8 +226,14 @@ pub fn heal_skill(
         }
     }
 
-    // Create symlink
-    unix::fs::symlink(canonical_skill, &skill_path)?;
+    create_skill_symlink(canonical_skill, &skill_path).with_context(|| {
+        format!(
+            "failed to link {} -> {}{}",
+            skill_path.display(),
+            canonical_skill.display(),
+            crate::instructions::symlink_hint()
+        )
+    })?;
 
     eprintln!(
         "  {} skill {} -> {} (symlink)",
@@ -201,19 +243,6 @@ pub fn heal_skill(
     );
 
     Ok(true)
-}
-
-/// Non-unix fallback: just report that symlinks aren't supported.
-#[cfg(not(unix))]
-pub fn heal_skill(
-    _agent_skills_dir: &Path,
-    _skill_name: &str,
-    _canonical_skill: &Path,
-    _agent_name: &str,
-    _backup_dir: &Path,
-) -> anyhow::Result<bool> {
-    eprintln!("  warning: symlinks not supported on this platform");
-    Ok(false)
 }
 
 /// Heal all skills for all agents. Returns the number of changes made.
@@ -482,11 +511,24 @@ pub fn collect_orphan_skills(home: &Path) -> anyhow::Result<usize> {
                 continue;
             }
 
-            // Move to canonical store (copy then remove — rename fails across
-            // filesystems or when hidden files prevent atomic move).
+            // Copy into the canonical store, then park the original next to
+            // itself so a failed symlink can be undone instead of losing it.
             let canonical_path = canonical_dir.join(&name);
             copy_dir_recursive(&path, &canonical_path)?;
-            std::fs::remove_dir_all(&path)?;
+
+            let parked = parked_path(&path);
+            std::fs::rename(&path, &parked)?;
+            if let Err(e) = create_skill_symlink(&canonical_path, &path) {
+                std::fs::rename(&parked, &path)?;
+                return Err(anyhow::Error::new(e).context(format!(
+                    "failed to link {} -> {}{}",
+                    path.display(),
+                    canonical_path.display(),
+                    crate::instructions::symlink_hint()
+                )));
+            }
+            std::fs::remove_dir_all(&parked)?;
+
             collected += 1;
             eprintln!(
                 "  collected skill {} from {} -> canonical",
@@ -532,7 +574,6 @@ mod tests {
         assert_eq!(fixed, 0);
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_heal_creates_symlinks() {
         let (_tmp, home) = setup();
@@ -562,7 +603,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_heal_replaces_real_dir() {
         let (_tmp, home) = setup();
@@ -596,7 +636,6 @@ mod tests {
         assert!(!backups.is_empty(), "expected backup of replaced dir");
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_heal_idempotent() {
         let (_tmp, home) = setup();
@@ -614,7 +653,6 @@ mod tests {
         assert_eq!(fixed2, 0);
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_heal_imports_opencode_command_as_codex_skill() {
         let tmp = TempDir::new().unwrap();
@@ -655,7 +693,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_heal_continues_when_opencode_commands_cannot_be_scanned() {
         let tmp = TempDir::new().unwrap();
