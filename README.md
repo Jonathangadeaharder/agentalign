@@ -58,7 +58,7 @@ agentalign watch                            # Run the file watcher daemon
 - **Delta merger**: bidirectional sync detects adds, updates, and removals between agent configs and canonical.
 - **Secret splitting**: sensitive fields (api_key, token, password, etc.) are extracted to OS keychain or `~/.agents/local.json` fallback, replaced with `${ENV_AGENTALIGN_SECRET_*}` placeholders.
 - **Environment interpolation**: normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
-- **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source. Agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) are symlinks.
+- **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source. Agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) and the VS Code Copilot `agents.instructions.md` are symlinks.
 - **Skills directory syncing**: `~/.agents/skills/` is the canonical source. Per-agent skill dirs are symlinked.
 - **Rules generation**: splits `~/.agents/AGENTS.md` into path-scoped Cursor `.mdc` and Claude `.md` rule files, regenerated on every `sync` and on AGENTS.md changes via `watch`.
 - **Magic mode**: installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.
