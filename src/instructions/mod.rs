@@ -10,11 +10,52 @@
 //! - `agentalign watch` (on daemon startup and on file change events)
 
 use std::fs;
-#[cfg(unix)]
-use std::os::unix;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use chrono::Utc;
+
+/// Create a symlink at `link` pointing to `canonical`.
+///
+/// Windows needs `symlink_file` plus Developer Mode or elevation.
+pub(crate) fn create_symlink(canonical: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(canonical, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(canonical, link)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (canonical, link);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "symlinks are not supported on this platform",
+        ))
+    }
+}
+
+/// Platform-specific hint appended to symlink creation failures.
+fn symlink_hint() -> &'static str {
+    if cfg!(windows) {
+        " (Windows requires Developer Mode or an elevated shell to create symlinks)"
+    } else {
+        ""
+    }
+}
+
+/// Compare two paths, tolerating the `\\?\` prefix Windows `read_link` returns.
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
 
 /// A symlink entry in the instruction file registry.
 pub struct InstructionEntry {
@@ -100,7 +141,7 @@ impl InstructionEntry {
                     target
                 };
 
-                if resolved == canonical_path || resolved == *canonical_path {
+                if same_path(&resolved, canonical_path) {
                     SymlinkState::Ok
                 } else {
                     SymlinkState::WrongTarget {
@@ -124,56 +165,48 @@ impl InstructionEntry {
     /// Returns `true` if a change was made, `false` if already correct.
     pub fn heal(&self, canonical_path: &Path) -> anyhow::Result<bool> {
         let state = self.verify(canonical_path);
+        if state == SymlinkState::Ok {
+            return Ok(false);
+        }
 
-        match state {
-            SymlinkState::Ok => return Ok(false),
-            SymlinkState::Missing => {
-                // Ensure parent directory exists
-                if let Some(parent) = self.symlink_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-            }
-            SymlinkState::WrongTarget { current_target: _ } => {
-                // Remove the wrong symlink
-                fs::remove_file(&self.symlink_path)?;
-            }
-            SymlinkState::ReplacedByFile => {
-                // Backup the file before replacing
-                let backup_dir = canonical_path
-                    .parent()
-                    .ok_or_else(|| anyhow::anyhow!("canonical path has no parent"))?
-                    .join("backups");
-                fs::create_dir_all(&backup_dir)?;
+        if let Some(parent) = self.symlink_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
-                let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-                let backup_name = format!("{}-AGENTS.md-{}.bak", self.agent, timestamp);
-                let backup_path = backup_dir.join(&backup_name);
+        // Stage the link beside the target and rename it into place, so a platform
+        // that cannot create symlinks never destroys the existing instruction file.
+        let staged = staging_path(&self.symlink_path);
+        let _ = fs::remove_file(&staged);
+        create_symlink(canonical_path, &staged).with_context(|| {
+            format!(
+                "cannot symlink {} -> {}{}",
+                self.symlink_path.display(),
+                canonical_path.display(),
+                symlink_hint()
+            )
+        })?;
 
-                // Read existing content for backup
-                let content = fs::read_to_string(&self.symlink_path)?;
-                fs::write(&backup_path, &content)?;
-
-                // Remove the regular file
-                fs::remove_file(&self.symlink_path)?;
-
-                println!(
+        if state == SymlinkState::ReplacedByFile {
+            match self.backup(canonical_path) {
+                Ok(backup_path) => println!(
                     "  backed up {} -> {}",
                     self.symlink_path.display(),
                     backup_path.display()
-                );
+                ),
+                Err(e) => {
+                    let _ = fs::remove_file(&staged);
+                    return Err(e);
+                }
             }
         }
 
-        // Create the symlink
-        #[cfg(unix)]
-        unix::fs::symlink(canonical_path, &self.symlink_path)?;
-        #[cfg(not(unix))]
-        {
-            eprintln!(
-                "  warning: symlinks not supported on this platform, skipping {}",
-                self.agent
-            );
-            return Ok(false);
+        // fs::rename replaces an existing file or symlink on both Unix and Windows.
+        if let Err(e) = fs::rename(&staged, &self.symlink_path) {
+            let _ = fs::remove_file(&staged);
+            return Err(anyhow::Error::new(e).context(format!(
+                "cannot move the new symlink into place at {}",
+                self.symlink_path.display()
+            )));
         }
 
         println!(
@@ -184,6 +217,30 @@ impl InstructionEntry {
 
         Ok(true)
     }
+
+    /// Copy the current instruction file into `~/.agents/backups/`, returning its path.
+    fn backup(&self, canonical_path: &Path) -> anyhow::Result<PathBuf> {
+        let backup_dir = canonical_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("canonical path has no parent"))?
+            .join("backups");
+        fs::create_dir_all(&backup_dir)?;
+
+        let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+        let backup_path =
+            backup_dir.join(format!("{}-AGENTS.md-{}.bak", self.agent, timestamp));
+        fs::copy(&self.symlink_path, &backup_path).with_context(|| {
+            format!("cannot back up {}", self.symlink_path.display())
+        })?;
+        Ok(backup_path)
+    }
+}
+
+/// Sibling path used to stage a new symlink before renaming it over the target.
+fn staging_path(target: &Path) -> PathBuf {
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(".agentalign-new");
+    target.with_file_name(name)
 }
 
 /// Helper trait extension for Path to check symlink metadata without following.
@@ -265,6 +322,13 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Create a symlink in tests on whichever platform is running.
+    fn link(target: &Path, at: &Path) {
+        create_symlink(target, at).expect(
+            "test symlink creation failed; on Windows enable Developer Mode or run elevated",
+        );
+    }
+
     fn setup() -> (TempDir, PathBuf, Vec<InstructionEntry>) {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
@@ -295,7 +359,7 @@ mod tests {
 
         // Create parent and symlink
         fs::create_dir_all(entry.symlink_path.parent().unwrap()).unwrap();
-        unix::fs::symlink(&canonical, &entry.symlink_path).unwrap();
+        link(&canonical, &entry.symlink_path);
 
         assert_eq!(entry.verify(&canonical), SymlinkState::Ok);
     }
@@ -311,7 +375,7 @@ mod tests {
         let wrong_target = entry.symlink_path.parent().unwrap().join("wrong.md");
         fs::write(&wrong_target, b"wrong content").unwrap();
 
-        unix::fs::symlink(&wrong_target, &entry.symlink_path).unwrap();
+        link(&wrong_target, &entry.symlink_path);
 
         assert_eq!(
             entry.verify(&canonical),
@@ -351,7 +415,7 @@ mod tests {
         fs::create_dir_all(entry.symlink_path.parent().unwrap()).unwrap();
         let wrong_target = entry.symlink_path.parent().unwrap().join("wrong.md");
         fs::write(&wrong_target, b"wrong content").unwrap();
-        unix::fs::symlink(&wrong_target, &entry.symlink_path).unwrap();
+        link(&wrong_target, &entry.symlink_path);
 
         let changed = entry.heal(&canonical).unwrap();
         assert!(changed);
@@ -377,6 +441,54 @@ mod tests {
             .filter_map(|e| e.ok())
             .collect();
         assert!(!backups.is_empty(), "expected at least one backup file");
+    }
+
+    #[test]
+    fn test_heal_preserves_non_utf8_content_in_backup() {
+        let (_tmp, canonical, entries) = setup();
+        let entry = &entries[0];
+        let raw: &[u8] = &[b'#', b' ', 0xff, 0xfe, b' ', b'n', b'o', b't', b'e', b's'];
+
+        fs::create_dir_all(entry.symlink_path.parent().unwrap()).unwrap();
+        fs::write(&entry.symlink_path, raw).unwrap();
+
+        entry.heal(&canonical).unwrap();
+
+        let backup_dir = canonical.parent().unwrap().join("backups");
+        let backup = fs::read_dir(&backup_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(&backup).unwrap(), raw);
+    }
+
+    #[test]
+    fn test_heal_is_idempotent() {
+        let (_tmp, canonical, entries) = setup();
+        let entry = &entries[0];
+
+        assert!(entry.heal(&canonical).unwrap());
+        assert!(
+            !entry.heal(&canonical).unwrap(),
+            "a healed symlink must verify as Ok, otherwise every sync rewrites it"
+        );
+    }
+
+    #[test]
+    fn test_heal_leaves_no_staging_file() {
+        let (_tmp, canonical, entries) = setup();
+        let entry = &entries[0];
+
+        entry.heal(&canonical).unwrap();
+
+        let staged = staging_path(&entry.symlink_path);
+        assert!(
+            fs::symlink_metadata(&staged).is_err(),
+            "staging file {} was left behind",
+            staged.display()
+        );
     }
 
     #[test]
