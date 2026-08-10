@@ -34,7 +34,7 @@ pub fn create_transaction(agent: &str, target_path: &Path) -> Result<SyncTransac
     let checksum_before = hex::encode(Sha256::digest(&original_content));
 
     // Create backup directory
-    let home = dirs::home_dir().context("Cannot find home directory")?;
+    let home = crate::shared::home_dir()?;
     let backup_dir = home.join(".agents").join("backups");
     fs::create_dir_all(&backup_dir).context("Failed to create backup directory")?;
     // Use the transaction UUID in the backup filename to guarantee uniqueness.

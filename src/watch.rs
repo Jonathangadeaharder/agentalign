@@ -127,7 +127,7 @@ fn build_watch_list(home: &Path) -> Vec<WatchEntry> {
 
 /// Run the file watcher daemon. Blocks until interrupted.
 pub fn run_daemon() -> anyhow::Result<()> {
-    let home = dirs::home_dir().context("HOME environment variable must be set")?;
+    let home = crate::shared::home_dir()?;
     let agents_dir = home.join(".agents");
     let canonical_path = agents_dir.join("mcp_config.json");
 

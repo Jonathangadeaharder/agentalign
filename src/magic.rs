@@ -4,17 +4,23 @@
 //! `~/Library/LaunchAgents/com.agentalign.magic.plist` that runs
 //! `agentalign watch` on login and keeps it alive.
 
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Command;
 
+#[cfg(unix)]
 use anyhow::Context;
 
+#[cfg(unix)]
 const PLIST_LABEL: &str = "com.agentalign.magic";
 
 /// Get the path to the LaunchAgent plist.
+#[cfg(unix)]
 fn plist_path() -> anyhow::Result<PathBuf> {
-    let home = dirs::home_dir().context("HOME environment variable must be set")?;
+    let home = crate::shared::home_dir()?;
     Ok(home
         .join("Library")
         .join("LaunchAgents")
@@ -22,11 +28,13 @@ fn plist_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Get the path to the agentalign binary.
+#[cfg(unix)]
 fn binary_path() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agentalign"))
 }
 
 /// Get the current user's GUI domain UID for launchctl bootstrap.
+#[cfg(unix)]
 fn gui_uid() -> String {
     // On macOS, the GUI domain is gui/<uid> where uid is the user's numeric ID
     // SAFETY: `getuid()` is a POSIX function that always returns the real user ID
@@ -36,7 +44,16 @@ fn gui_uid() -> String {
     format!("gui/{}", uid)
 }
 
+/// Magic mode is a macOS LaunchAgent; there is no equivalent on other platforms yet.
+#[cfg(not(unix))]
+fn unsupported() -> anyhow::Error {
+    anyhow::anyhow!(
+        "magic mode is macOS-only (it installs a LaunchAgent); run `agentalign watch` manually instead"
+    )
+}
+
 /// Escape a string for safe XML/plist embedding.
+#[cfg(unix)]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -46,6 +63,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// Generate the LaunchAgent plist XML.
+#[cfg(unix)]
 fn generate_plist(binary: &std::path::Path) -> String {
     let escaped_binary = xml_escape(&binary.display().to_string());
     format!(
@@ -77,6 +95,7 @@ fn generate_plist(binary: &std::path::Path) -> String {
 }
 
 /// Enable magic mode: install and start the LaunchAgent.
+#[cfg(unix)]
 pub fn enable() -> anyhow::Result<()> {
     let plist = plist_path()?;
     let binary = binary_path();
@@ -123,6 +142,7 @@ pub fn enable() -> anyhow::Result<()> {
 }
 
 /// Disable magic mode: unload and remove the LaunchAgent.
+#[cfg(unix)]
 pub fn disable() -> anyhow::Result<()> {
     let plist = plist_path()?;
 
@@ -160,6 +180,7 @@ pub fn disable() -> anyhow::Result<()> {
 }
 
 /// Show magic mode status.
+#[cfg(unix)]
 pub fn status() -> anyhow::Result<()> {
     let plist = plist_path()?;
 
@@ -199,5 +220,22 @@ pub fn status() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Magic mode stubs for platforms without launchd.
+#[cfg(not(unix))]
+pub fn enable() -> anyhow::Result<()> {
+    Err(unsupported())
+}
+
+#[cfg(not(unix))]
+pub fn disable() -> anyhow::Result<()> {
+    Err(unsupported())
+}
+
+#[cfg(not(unix))]
+pub fn status() -> anyhow::Result<()> {
+    println!("Magic mode: unsupported on this platform");
     Ok(())
 }

@@ -372,7 +372,7 @@ fn load_canonical(home: &Path) -> Result<CanonicalWorkspaceState> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let home = dirs::home_dir().context("HOME environment variable must be set")?;
+    let home = agentalign::shared::home_dir()?;
 
     match cli.command {
         Commands::Migrate { dry_run } => {

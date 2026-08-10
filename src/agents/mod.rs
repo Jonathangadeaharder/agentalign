@@ -229,6 +229,7 @@ fn is_broken_symlink(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ensure_dir_all;
+    #[cfg(unix)]
     use std::path::Path;
     use tempfile::TempDir;
 

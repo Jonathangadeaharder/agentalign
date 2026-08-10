@@ -12,13 +12,13 @@ pub struct LocalSecretStore {
 
 /// Discover the path to ~/.agents/local.json.
 fn local_json_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let home = crate::shared::home_dir()?;
     Ok(home.join(".agents").join("local.json"))
 }
 
 /// Ensure ~/.agents/ directory exists.
 fn ensure_agents_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let home = crate::shared::home_dir()?;
     let dir = home.join(".agents");
     std::fs::create_dir_all(&dir).context("Could not create ~/.agents/ directory")?;
     Ok(dir)

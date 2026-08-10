@@ -17,6 +17,7 @@
 use std::os::unix;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use chrono::Utc;
 
 /// Get the canonical skills directory path.

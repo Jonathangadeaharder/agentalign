@@ -7,7 +7,7 @@ use toml_edit::{table as tbl_value, value, DocumentMut, InlineTable, Item};
 use crate::shared::models::{SyncTransaction, TransactionStatus};
 
 fn cache_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Cannot find home directory")?;
+    let home = crate::shared::home_dir()?;
     let dir = home.join(".agents");
     fs::create_dir_all(&dir).context("Failed to create ~/.agents directory")?;
     Ok(dir.join("cache.toml"))
