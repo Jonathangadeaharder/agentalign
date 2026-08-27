@@ -115,7 +115,7 @@ impl AgentRegistry {
             AgentDescriptor {
                 agent_type: AgentType::Claude,
                 label: "Claude",
-                config_path: home.join(".claude").join(".mcp.json"),
+                config_path: home.join(".claude.json"),
                 instruction_path: Some(home.join(".claude").join("CLAUDE.md")),
                 skills_dir: Some(home.join(".claude").join("skills")),
             },
@@ -129,7 +129,7 @@ impl AgentRegistry {
             AgentDescriptor {
                 agent_type: AgentType::Gemini,
                 label: "Gemini",
-                config_path: home.join(".gemini").join("config").join("mcp_config.json"),
+                config_path: home.join(".gemini").join("settings.json"),
                 instruction_path: Some(home.join(".gemini").join("GEMINI.md")),
                 skills_dir: Some(home.join(".gemini").join("config").join("skills")),
             },
@@ -144,7 +144,7 @@ impl AgentRegistry {
                 agent_type: AgentType::Codex,
                 label: "Codex",
                 config_path: home.join(".codex").join("config.toml"),
-                instruction_path: Some(home.join(".codex").join("CODEX.md")),
+                instruction_path: Some(home.join(".codex").join("AGENTS.md")),
                 skills_dir: Some(home.join(".codex").join("skills")),
             },
             AgentDescriptor {

@@ -153,7 +153,7 @@ impl ConfigurationAdapter for GeminiStrategy {
         if self.is_antigravity {
             base_path.join(".gemini").join("antigravity").join("mcp_config.json")
         } else {
-            base_path.join(".gemini").join("config").join("mcp_config.json")
+            base_path.join(".gemini").join("settings.json")
         }
     }
 

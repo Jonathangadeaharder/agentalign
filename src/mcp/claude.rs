@@ -168,7 +168,7 @@ impl ConfigurationAdapter for ClaudeStrategy {
         if self.is_cursor {
             base_path.join(".cursor").join("mcp.json")
         } else {
-            base_path.join(".claude").join(".mcp.json")
+            base_path.join(".claude.json")
         }
     }
 

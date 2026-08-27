@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod models;
+pub mod paths;
 pub mod traits;
 
 use std::path::PathBuf;

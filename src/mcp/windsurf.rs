@@ -165,7 +165,7 @@ impl ConfigurationAdapter for WindsurfStrategy {
     }
 
     fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
-        base_path.join(".windsurf").join(".mcp.json")
+        base_path.join(".codeium").join("windsurf").join("mcp_config.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {

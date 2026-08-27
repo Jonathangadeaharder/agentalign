@@ -136,10 +136,7 @@ impl ConfigurationAdapter for VSCodeStrategy {
     }
 
     fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
-        // VS Code stores MCP config in global storage
-        base_path.join(".vscode")
-            .join("globalStorage")
-            .join(".mcp.json")
+        crate::shared::paths::vscode_user_dir(base_path).join("mcp.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {

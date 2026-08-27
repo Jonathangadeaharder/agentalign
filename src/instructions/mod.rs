@@ -65,20 +65,7 @@ pub struct InstructionEntry {
     pub symlink_path: PathBuf,
 }
 
-/// VS Code's user prompts directory, where Copilot reads `*.instructions.md`.
-fn vscode_prompts_dir(home: &Path) -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let base = home.join("AppData").join("Roaming").join("Code");
-    #[cfg(target_os = "macos")]
-    let base = home
-        .join("Library")
-        .join("Application Support")
-        .join("Code");
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let base = home.join(".config").join("Code");
-
-    base.join("User").join("prompts")
-}
+use crate::shared::paths::vscode_prompts_dir;
 
 /// Build the registry of instruction file symlinks.
 fn registry(home: &Path) -> Vec<InstructionEntry> {
@@ -95,9 +82,11 @@ fn registry(home: &Path) -> Vec<InstructionEntry> {
             agent: "gemini",
             symlink_path: home.join(".gemini").join("GEMINI.md"),
         },
+        // Codex reads AGENTS.override.md then AGENTS.md from ~/.codex; CODEX.md
+        // is never loaded at user scope.
         InstructionEntry {
             agent: "codex",
-            symlink_path: home.join(".codex").join("CODEX.md"),
+            symlink_path: home.join(".codex").join("AGENTS.md"),
         },
         InstructionEntry {
             agent: "zcode",

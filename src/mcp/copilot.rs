@@ -1,9 +1,9 @@
 //! Copilot CLI MCP format strategy.
 //!
-//! Format (JSON):
+//! Format (JSON), read from `~/.copilot/mcp-config.json`:
 //! ```json
 //! {
-//!   "servers": {
+//!   "mcpServers": {
 //!     "server_name": {
 //!       "command": "npx",
 //!       "args": ["..."],
@@ -15,6 +15,9 @@
 //!
 //! Uses bare `$VAR` syntax (rejects VS Code `${env:VAR}` placeholders).
 //! Supports an explicit `env` map for environment variables.
+//!
+//! The top-level key is `mcpServers`, not VS Code's `servers`, which is why a
+//! `.vscode/mcp.json` cannot be reused here.
 
 use crate::shared::error::{AdapterError, Result};
 use crate::shared::models::{
@@ -36,10 +39,10 @@ impl ConfigurationAdapter for CopilotStrategy {
         let raw_val: JsonValue = serde_json::from_str(raw)?;
 
         let servers = raw_val
-            .get("servers")
+            .get("mcpServers")
             .and_then(|v| v.as_object())
             .ok_or_else(|| {
-                AdapterError::Other("Missing 'servers' key in Copilot config".into())
+                AdapterError::Other("Missing 'mcpServers' key in Copilot config".into())
             })?;
 
         let mut canonical_servers = serde_json::Map::new();
@@ -139,12 +142,12 @@ impl ConfigurationAdapter for CopilotStrategy {
         }
 
         let mut root = serde_json::Map::new();
-        root.insert("servers".into(), JsonValue::Object(servers));
+        root.insert("mcpServers".into(), JsonValue::Object(servers));
         Ok(serde_json::to_string_pretty(&JsonValue::Object(root))?)
     }
 
     fn target_config_path(&self, base_path: &Path) -> std::path::PathBuf {
-        base_path.join(".config").join("github-copilot").join("mcp.json")
+        crate::shared::paths::copilot_home(base_path).join("mcp-config.json")
     }
 
     fn normalize_env(&self, env: &HashMap<String, String>) -> HashMap<String, String> {
@@ -158,7 +161,7 @@ impl ConfigurationAdapter for CopilotStrategy {
 
     fn extract_unknowns(&self, raw: &JsonValue) -> HashMap<String, JsonValue> {
         let mut result = HashMap::new();
-        if let Some(servers) = raw.get("servers").and_then(|v| v.as_object()) {
+        if let Some(servers) = raw.get("mcpServers").and_then(|v| v.as_object()) {
             let known = ["command", "args", "url", "env"];
             for (name, entry) in servers {
                 if let Some(obj) = entry.as_object() {
