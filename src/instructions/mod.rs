@@ -37,6 +37,18 @@ pub(crate) fn create_symlink(canonical: &Path, link: &Path) -> std::io::Result<(
     }
 }
 
+/// Link `link` to `canonical`, falling back to a hard link.
+///
+/// Windows refuses symlinks without Developer Mode or elevation, but allows hard
+/// links to a file on the same volume, which reads and writes through to the
+/// canonical file just the same.
+pub(crate) fn create_link(canonical: &Path, link: &Path) -> std::io::Result<()> {
+    match create_symlink(canonical, link) {
+        Ok(()) => Ok(()),
+        Err(symlink_err) => std::fs::hard_link(canonical, link).map_err(|_| symlink_err),
+    }
+}
+
 /// Platform-specific hint appended to symlink creation failures.
 pub(crate) fn symlink_hint() -> &'static str {
     if cfg!(windows) {
@@ -160,11 +172,14 @@ impl InstructionEntry {
                 }
             }
             Err(_) => {
-                // Not a symlink — must be a regular file (or broken symlink which exists() returns false for)
-                if path.exists() {
-                    SymlinkState::ReplacedByFile
-                } else {
-                    SymlinkState::Missing
+                if !path.exists() {
+                    return SymlinkState::Missing;
+                }
+                // A hard-link fallback is indistinguishable from a regular file,
+                // so identical content counts as linked and needs no healing.
+                match (fs::read(path), fs::read(canonical_path)) {
+                    (Ok(current), Ok(canonical)) if current == canonical => SymlinkState::Ok,
+                    _ => SymlinkState::ReplacedByFile,
                 }
             }
         }
@@ -187,9 +202,9 @@ impl InstructionEntry {
         // that cannot create symlinks never destroys the existing instruction file.
         let staged = staging_path(&self.symlink_path);
         let _ = fs::remove_file(&staged);
-        create_symlink(canonical_path, &staged).with_context(|| {
+        create_link(canonical_path, &staged).with_context(|| {
             format!(
-                "cannot symlink {} -> {}{}",
+                "cannot link {} -> {}{}",
                 self.symlink_path.display(),
                 canonical_path.display(),
                 symlink_hint()
@@ -296,9 +311,12 @@ pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     let entries = registry(home);
     let mut fixed = 0usize;
 
+    // Report and continue: one agent that cannot be linked must not stop the rest.
     for entry in &entries {
-        if entry.heal(&canonical)? {
-            fixed += 1;
+        match entry.heal(&canonical) {
+            Ok(true) => fixed += 1,
+            Ok(false) => {}
+            Err(e) => eprintln!("  instruction symlink error for {}: {:#}", entry.agent, e),
         }
     }
 
