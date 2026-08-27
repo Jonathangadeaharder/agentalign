@@ -127,6 +127,24 @@ impl AgentRegistry {
                 skills_dir: Some(home.join(".cursor").join("skills")),
             },
             AgentDescriptor {
+                agent_type: AgentType::Copilot,
+                label: "Copilot",
+                config_path: crate::shared::paths::copilot_home(home).join("mcp-config.json"),
+                instruction_path: Some(
+                    crate::shared::paths::copilot_home(home).join("copilot-instructions.md"),
+                ),
+                skills_dir: None, // Copilot CLI reads ~/.agents/skills natively
+            },
+            AgentDescriptor {
+                agent_type: AgentType::VSCode,
+                label: "VSCode",
+                config_path: crate::shared::paths::vscode_user_dir(home).join("mcp.json"),
+                instruction_path: Some(
+                    crate::shared::paths::vscode_prompts_dir(home).join("agents.instructions.md"),
+                ),
+                skills_dir: None, // VS Code Copilot has no skills concept
+            },
+            AgentDescriptor {
                 agent_type: AgentType::Gemini,
                 label: "Gemini",
                 config_path: home.join(".gemini").join("settings.json"),

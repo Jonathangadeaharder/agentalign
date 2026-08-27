@@ -77,7 +77,7 @@ pub struct InstructionEntry {
     pub symlink_path: PathBuf,
 }
 
-use crate::shared::paths::vscode_prompts_dir;
+use crate::shared::paths::{copilot_home, vscode_prompts_dir};
 
 /// Build the registry of instruction file symlinks.
 fn registry(home: &Path) -> Vec<InstructionEntry> {
@@ -118,6 +118,11 @@ fn registry(home: &Path) -> Vec<InstructionEntry> {
         InstructionEntry {
             agent: "copilot-vscode",
             symlink_path: vscode_prompts_dir(home).join("agents.instructions.md"),
+        },
+        // Copilot CLI loads its user-level instructions from this one file.
+        InstructionEntry {
+            agent: "copilot-cli",
+            symlink_path: copilot_home(home).join("copilot-instructions.md"),
         },
     ]
 }
