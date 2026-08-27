@@ -109,8 +109,8 @@ fn build_watch_list(home: &Path) -> Vec<WatchEntry> {
         }
     }
 
-    // Rules directories (Cursor .mdc + Claude .md) — detect manual edits/deletes
-    // so they get regenerated from AGENTS.md like skills/instructions do.
+    // Rules directories — detect manual edits and deletes so they get
+    // regenerated from AGENTS.md like skills and instructions do.
     entries.push(WatchEntry {
         id: format!("{}cursor", RULES_PREFIX),
         agent_type: None,
@@ -120,6 +120,11 @@ fn build_watch_list(home: &Path) -> Vec<WatchEntry> {
         id: format!("{}claude", RULES_PREFIX),
         agent_type: None,
         path: rules::claude_rules_dir(home),
+    });
+    entries.push(WatchEntry {
+        id: format!("{}copilot", RULES_PREFIX),
+        agent_type: None,
+        path: rules::copilot_rules_dir(home),
     });
 
     entries
