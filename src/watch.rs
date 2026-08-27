@@ -534,6 +534,7 @@ fn sync_all_agents(
 
         match strategy.serialize_from_canonical(&state_json, home) {
             Ok(output) => {
+                let output = crate::sync::overlay::overlay_onto_existing(&output, target_path);
                 if should_write(target_path, &output) {
                     match transaction::create_transaction(id, target_path) {
                         Ok(tx) => {
@@ -600,6 +601,7 @@ fn sync_selected_agents(
 
         match strategy.serialize_from_canonical(&state_json, home) {
             Ok(output) => {
+                let output = crate::sync::overlay::overlay_onto_existing(&output, target_path);
                 if should_write(target_path, &output) {
                     match transaction::create_transaction(id, target_path) {
                         Ok(tx) => {

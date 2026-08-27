@@ -258,6 +258,9 @@ fn push_to_agents_impl(
                         .with_context(|| format!("Failed to create dir for {}", descriptor.label))?;
                 }
 
+                // Keep unrelated top-level keys of shared settings files
+                let output = agentalign::sync::overlay::overlay_onto_existing(&output, target_path);
+
                 // Preserve local entries from existing file
                 let output = preserve_local_entries(&output, target_path, &local_entries);
 
