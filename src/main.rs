@@ -157,8 +157,8 @@ fn preserve_local_entries_json(
     let mut new_doc: serde_json::Value =
         serde_json::from_str(output).unwrap_or(serde_json::json!({}));
 
-    // Try both "mcp" and "mcpServers" keys
-    for key in &["mcp", "mcpServers"] {
+    // Every server-section key any JSON strategy emits.
+    for key in &["mcp", "mcpServers", "servers", "context_servers"] {
         if let Some(existing_servers) = existing.get(key).and_then(|v| v.as_object()) {
             if let Some(new_servers) = new_doc.get_mut(key).and_then(|v| v.as_object_mut()) {
                 for (name, value) in existing_servers {
@@ -190,12 +190,15 @@ fn preserve_local_entries_toml(
 
     let mut output_doc: toml_edit::DocumentMut = output.parse().unwrap_or_else(|_| toml_edit::DocumentMut::new());
 
-    // Find the [mcp] table in existing, re-merge local entries into output
-    if let Some(existing_mcp) = existing_doc.get("mcp").and_then(|v| v.as_table()) {
-        if let Some(output_mcp) = output_doc.get_mut("mcp").and_then(|v| v.as_table_mut()) {
-            for (name, value) in existing_mcp {
-                if local_entries.contains(name) && !output_mcp.contains_key(name) {
-                    output_mcp.insert(name, value.clone());
+    // Codex writes [mcp_servers], Grok writes [mcp]; re-merge local entries into
+    // whichever table the output carries.
+    for table in &["mcp", "mcp_servers"] {
+        if let Some(existing_mcp) = existing_doc.get(table).and_then(|v| v.as_table()) {
+            if let Some(output_mcp) = output_doc.get_mut(table).and_then(|v| v.as_table_mut()) {
+                for (name, value) in existing_mcp {
+                    if local_entries.contains(name) && !output_mcp.contains_key(name) {
+                        output_mcp.insert(name, value.clone());
+                    }
                 }
             }
         }
