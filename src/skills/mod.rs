@@ -40,6 +40,28 @@ fn create_skill_symlink(canonical: &Path, link: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Link `link` to `canonical`, falling back to a junction. Returns the mechanism used.
+///
+/// Windows refuses directory symlinks without Developer Mode or elevation, but a
+/// junction to a directory on the same volume needs neither and resolves the same.
+fn create_skill_link(canonical: &Path, link: &Path) -> std::io::Result<&'static str> {
+    match create_skill_symlink(canonical, link) {
+        Ok(()) => Ok("symlink"),
+        Err(symlink_err) => {
+            #[cfg(windows)]
+            {
+                junction::create(canonical, link)
+                    .map(|()| "junction")
+                    .map_err(|_| symlink_err)
+            }
+            #[cfg(not(windows))]
+            {
+                Err(symlink_err)
+            }
+        }
+    }
+}
+
 /// Remove a symlink that points at a directory.
 ///
 /// Windows directory symlinks are removed with `remove_dir`, not `remove_file`.
@@ -226,7 +248,7 @@ pub fn heal_skill(
         }
     }
 
-    create_skill_symlink(canonical_skill, &skill_path).with_context(|| {
+    let mechanism = create_skill_link(canonical_skill, &skill_path).with_context(|| {
         format!(
             "failed to link {} -> {}{}",
             skill_path.display(),
@@ -236,10 +258,11 @@ pub fn heal_skill(
     })?;
 
     eprintln!(
-        "  {} skill {} -> {} (symlink)",
+        "  {} skill {} -> {} ({})",
         agent_name,
         skill_name,
-        canonical_skill.display()
+        canonical_skill.display(),
+        mechanism
     );
 
     Ok(true)
@@ -518,7 +541,7 @@ pub fn collect_orphan_skills(home: &Path) -> anyhow::Result<usize> {
 
             let parked = parked_path(&path);
             std::fs::rename(&path, &parked)?;
-            if let Err(e) = create_skill_symlink(&canonical_path, &path) {
+            if let Err(e) = create_skill_link(&canonical_path, &path) {
                 std::fs::rename(&parked, &path)?;
                 return Err(anyhow::Error::new(e).context(format!(
                     "failed to link {} -> {}{}",
@@ -716,6 +739,27 @@ mod tests {
                 .file_type()
                 .is_symlink(),
             "codex should still receive canonical skills"
+        );
+    }
+
+    #[test]
+    fn test_skill_link_resolves_without_symlink_privilege() {
+        let tmp = TempDir::new().unwrap();
+        let canonical = tmp.path().join("canonical-skill");
+        let link = tmp.path().join("linked-skill");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::write(canonical.join("SKILL.md"), "# Canonical").unwrap();
+
+        let mechanism = create_skill_link(&canonical, &link).unwrap();
+
+        assert!(mechanism == "symlink" || mechanism == "junction");
+        assert_eq!(
+            fs::canonicalize(fs::read_link(&link).unwrap()).unwrap(),
+            fs::canonicalize(&canonical).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "# Canonical"
         );
     }
 
