@@ -355,11 +355,22 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    /// Create a symlink in tests on whichever platform is running.
-    fn link(target: &Path, at: &Path) {
-        create_symlink(target, at).expect(
-            "test symlink creation failed; on Windows enable Developer Mode or run elevated",
-        );
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+
+    /// Create a fixture symlink. Returns false when Windows denies the privilege.
+    ///
+    /// Only a real symlink can express a wrong target, so the tests that need one
+    /// skip rather than assert against a fixture the OS refused to build.
+    #[must_use]
+    fn link(target: &Path, at: &Path) -> bool {
+        match create_symlink(target, at) {
+            Ok(()) => true,
+            Err(e) if cfg!(windows) && e.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
+                eprintln!("skipped:{}", symlink_hint());
+                false
+            }
+            Err(e) => panic!("fixture symlink creation failed: {e}"),
+        }
     }
 
     fn setup() -> (TempDir, PathBuf, Vec<InstructionEntry>) {
@@ -392,7 +403,9 @@ mod tests {
 
         // Create parent and symlink
         fs::create_dir_all(entry.symlink_path.parent().unwrap()).unwrap();
-        link(&canonical, &entry.symlink_path);
+        if !link(&canonical, &entry.symlink_path) {
+            return;
+        }
 
         assert_eq!(entry.verify(&canonical), SymlinkState::Ok);
     }
@@ -408,7 +421,9 @@ mod tests {
         let wrong_target = entry.symlink_path.parent().unwrap().join("wrong.md");
         fs::write(&wrong_target, b"wrong content").unwrap();
 
-        link(&wrong_target, &entry.symlink_path);
+        if !link(&wrong_target, &entry.symlink_path) {
+            return;
+        }
 
         assert_eq!(
             entry.verify(&canonical),
@@ -448,7 +463,9 @@ mod tests {
         fs::create_dir_all(entry.symlink_path.parent().unwrap()).unwrap();
         let wrong_target = entry.symlink_path.parent().unwrap().join("wrong.md");
         fs::write(&wrong_target, b"wrong content").unwrap();
-        link(&wrong_target, &entry.symlink_path);
+        if !link(&wrong_target, &entry.symlink_path) {
+            return;
+        }
 
         let changed = entry.heal(&canonical).unwrap();
         assert!(changed);
