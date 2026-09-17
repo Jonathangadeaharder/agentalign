@@ -268,6 +268,44 @@ pub fn heal_skill(
     Ok(true)
 }
 
+/// Remove links to canonical skills that no longer exist.
+///
+/// A deleted canonical skill leaves a dangling symlink in every agent's skills
+/// directory. OpenCode aborts its whole skill scan on one unreadable entry, so a
+/// single stale link hides every skill from that agent.
+fn prune_dangling(skills_dir: &Path, canonical_dir: &Path, agent_name: &str) -> usize {
+    let entries = match std::fs::read_dir(skills_dir) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+    let mut pruned = 0usize;
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.file_type().is_symlink() || path.exists() {
+            continue;
+        }
+        // Only our own links; a dangling link to somewhere else is not ours to delete.
+        match std::fs::read_link(&path) {
+            Ok(target) if target.starts_with(canonical_dir) => {}
+            _ => continue,
+        }
+        if remove_symlink(&path).is_ok() {
+            eprintln!(
+                "  {} skill {} -> pruned (canonical skill gone)",
+                agent_name,
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+            pruned += 1;
+        }
+    }
+
+    pruned
+}
+
 /// Heal all skills for all agents. Returns the number of changes made.
 pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     let canonical_dir = canonical_skills_dir(home);
@@ -306,6 +344,7 @@ pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     for entry in &entries {
         // Ensure agent skills dir exists
         std::fs::create_dir_all(&entry.skills_dir).ok();
+        fixed += prune_dangling(&entry.skills_dir, &canonical_dir, entry.agent);
 
         for skill_name in &canonical_skills {
             let canonical_skill_path = canonical_dir.join(skill_name);
@@ -440,6 +479,7 @@ pub fn heal_one(home: &Path, agent: &str) -> anyhow::Result<usize> {
     let mut fixed = 0usize;
 
     std::fs::create_dir_all(&entry.skills_dir).ok();
+    fixed += prune_dangling(&entry.skills_dir, &canonical_dir, entry.agent);
 
     for skill_name in &canonical_skills {
         let canonical_skill_path = canonical_dir.join(skill_name);
@@ -769,4 +809,28 @@ mod tests {
         let result = heal_one(&home, "nonexistent");
         assert!(result.is_err());
     }
+    #[test]
+    fn test_heal_prunes_dangling_canonical_links() {
+        let (_tmp, home) = setup();
+        let canonical = canonical_skills_dir(&home);
+        fs::create_dir_all(canonical.join("kept")).unwrap();
+        fs::write(canonical.join("kept").join("SKILL.md"), "kept").unwrap();
+
+        let agent_skills = home.join(".claude").join("skills");
+        fs::create_dir_all(&agent_skills).unwrap();
+        let stale = agent_skills.join("gone");
+        create_skill_link(&canonical.join("gone"), &stale).unwrap();
+        let foreign = agent_skills.join("foreign");
+        create_skill_link(&home.join("elsewhere").join("foreign"), &foreign).unwrap();
+
+        heal_all(&home).unwrap();
+
+        assert!(fs::symlink_metadata(&stale).is_err(), "dangling canonical link kept");
+        assert!(
+            fs::symlink_metadata(&foreign).is_ok(),
+            "dangling link outside canonical store must be left alone"
+        );
+        assert!(fs::symlink_metadata(agent_skills.join("kept")).is_ok());
+    }
+
 }
