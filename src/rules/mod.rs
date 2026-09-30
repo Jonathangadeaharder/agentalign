@@ -21,18 +21,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Keys are heading slugs. A section not listed here is always-apply. A key that
 /// matches no section warns, so renaming a heading cannot silently unscope it.
-const SCOPES: &[(&str, &str)] = &[
-    (
-        "cpp-header-and-precompiled-header-policy",
-        "**/*.{h,hpp,hxx,inl,cpp,cxx,cc}",
-    ),
-    (
-        "build-invocation-msbuild",
-        "**/*.{sln,vcxproj,props,targets}",
-    ),
-    ("powershell-style", "**/*.ps1"),
-    ("debugging-turbomed-dumps", "**/*.dmp"),
-];
+const SCOPES: &[(&str, &str)] = &[];
 
 /// A rule derived from one AGENTS.md section.
 struct Rule {
@@ -94,13 +83,13 @@ fn split_sections(content: &str) -> Vec<(String, String)> {
 }
 
 /// Derive the rule set from AGENTS.md, warning on `SCOPES` keys that match nothing.
-fn derive_rules(content: &str) -> Vec<Rule> {
+fn derive_rules(content: &str, scopes: &[(&str, &'static str)]) -> Vec<Rule> {
     let rules: Vec<Rule> = split_sections(content)
         .into_iter()
         .filter(|(_, body)| !body.trim().is_empty())
         .map(|(title, body)| {
             let basename = slugify(&title);
-            let globs = SCOPES
+            let globs = scopes
                 .iter()
                 .find(|(slug, _)| *slug == basename)
                 .map(|(_, globs)| *globs);
@@ -113,7 +102,7 @@ fn derive_rules(content: &str) -> Vec<Rule> {
         })
         .collect();
 
-    for (slug, _) in SCOPES {
+    for (slug, _) in scopes {
         if !rules.iter().any(|rule| rule.basename == *slug) {
             eprintln!(
                 "  warning: scope '{}' matches no AGENTS.md heading — it is now always-apply",
@@ -350,6 +339,14 @@ fn targets(home: &Path) -> Vec<RuleTarget> {
 /// Sync AGENTS.md sections into every target's native rule format.
 /// Returns the total number of rule files written across all targets.
 pub fn sync_rules(home: &Path, dry_run: bool) -> anyhow::Result<usize> {
+    sync_rules_with_scopes(home, dry_run, SCOPES)
+}
+
+fn sync_rules_with_scopes(
+    home: &Path,
+    dry_run: bool,
+    scopes: &[(&str, &'static str)],
+) -> anyhow::Result<usize> {
     let agents_md_path = home.join(".agents").join("AGENTS.md");
 
     if !agents_md_path.exists() {
@@ -361,7 +358,7 @@ pub fn sync_rules(home: &Path, dry_run: bool) -> anyhow::Result<usize> {
     }
 
     let content = std::fs::read_to_string(&agents_md_path)?;
-    let rules = derive_rules(&content);
+    let rules = derive_rules(&content, scopes);
     let mut total_written = 0usize;
 
     for target in targets(home) {
@@ -376,6 +373,8 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    const PS_SCOPE: &[(&str, &str)] = &[("powershell-style", "**/*.ps1")];
 
     const AGENTS_MD: &str = "\
 # Global working rules
@@ -427,7 +426,7 @@ Three lines, optimally one.
     #[test]
     fn test_claude_receives_only_the_scoped_sections() {
         let (_tmp, home) = setup();
-        sync_rules(&home, false).expect("sync");
+        sync_rules_with_scopes(&home, false, PS_SCOPE).expect("sync");
 
         let dir = claude_rules_dir(&home);
         assert!(dir.join("powershell-style.md").exists());
@@ -440,7 +439,7 @@ Three lines, optimally one.
     #[test]
     fn test_copilot_scoped_rule_carries_apply_to() {
         let (_tmp, home) = setup();
-        sync_rules(&home, false).expect("sync");
+        sync_rules_with_scopes(&home, false, PS_SCOPE).expect("sync");
 
         let rule = copilot_rules_dir(&home).join("powershell-style.instructions.md");
         let content = fs::read_to_string(&rule).expect("read rule");
@@ -451,7 +450,7 @@ Three lines, optimally one.
     #[test]
     fn test_scoped_section_carries_its_globs_in_every_format() {
         let (_tmp, home) = setup();
-        sync_rules(&home, false).expect("sync");
+        sync_rules_with_scopes(&home, false, PS_SCOPE).expect("sync");
 
         let cursor = fs::read_to_string(cursor_rules_dir(&home).join("powershell-style.mdc"))
             .expect("cursor rule");
