@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use chrono::Utc;
 
+const GENERATED_COMMAND_MARKER: &str = "<!-- agentalign: skill command -->";
+
 /// Create a directory symlink at `link` pointing to `canonical`.
 ///
 /// Windows needs `symlink_dir` plus Developer Mode or elevation.
@@ -295,13 +297,15 @@ pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
         })
         .collect();
 
+    let commands = sync_opencode_skill_commands(home, &canonical_skills)?;
+
     if canonical_skills.is_empty() {
-        return Ok(0);
+        return Ok(commands);
     }
 
     let entries = registry(home);
     let backup_dir = home.join(".agents").join("backups");
-    let mut fixed = 0usize;
+    let mut fixed = commands;
 
     for entry in &entries {
         // Ensure agent skills dir exists
@@ -331,6 +335,73 @@ pub fn heal_all(home: &Path) -> anyhow::Result<usize> {
     Ok(fixed)
 }
 
+fn sync_opencode_skill_commands(home: &Path, canonical_skills: &[String]) -> anyhow::Result<usize> {
+    let opencode = home.join(".config").join("opencode");
+    let commands_dir = opencode.join("commands");
+    let configured: std::collections::HashSet<String> = match std::fs::read_to_string(opencode.join("opencode.json")) {
+        Ok(raw) => serde_json::from_str::<serde_json::Value>(&raw)?
+            .get("command")
+            .and_then(|commands| commands.as_object())
+            .map(|commands| commands.keys().cloned().collect())
+            .unwrap_or_default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
+    let mut changed = 0;
+
+    for skill_name in canonical_skills {
+        if configured.contains(skill_name) || ["init", "undo", "redo", "share", "help"].contains(&skill_name.as_str()) {
+            continue;
+        }
+        let skill_file = canonical_skills_dir(home).join(skill_name).join("SKILL.md");
+        let Ok(skill) = std::fs::read_to_string(skill_file) else {
+            continue;
+        };
+        let Some(frontmatter) = skill.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---")) else {
+            continue;
+        };
+        let Ok(metadata) = serde_yaml::from_str::<serde_yaml::Value>(frontmatter.0) else {
+            continue;
+        };
+        let Some(description) = metadata.get("description").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let command_path = commands_dir.join(format!("{skill_name}.md"));
+        let existing = std::fs::read_to_string(&command_path).ok();
+        if existing.as_ref().is_some_and(|text| !text.contains(GENERATED_COMMAND_MARKER)) {
+            continue;
+        }
+        let content = format!(
+            "---\ndescription: {}\n---\n\n{}\nLoad the `{}` skill and follow its instructions. User request: $ARGUMENTS\n",
+            serde_json::to_string(description)?, GENERATED_COMMAND_MARKER, skill_name
+        );
+        if existing.as_deref() != Some(&content) {
+            std::fs::create_dir_all(&commands_dir)?;
+            std::fs::write(command_path, content)?;
+            changed += 1;
+        }
+    }
+
+    if commands_dir.is_dir() {
+        for entry in std::fs::read_dir(&commands_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if path.is_file()
+                && path.extension().is_some_and(|extension| extension == "md")
+                && !canonical_skills.iter().any(|skill| skill == name)
+                && std::fs::read_to_string(&path)?.contains(GENERATED_COMMAND_MARKER)
+            {
+                std::fs::remove_file(path)?;
+                changed += 1;
+            }
+        }
+    }
+    Ok(changed)
+}
+
 /// Import top-level OpenCode command markdown files into the canonical skills store.
 ///
 /// OpenCode commands live as `~/.config/opencode/commands/<name>.md`, while
@@ -352,6 +423,10 @@ pub fn collect_opencode_commands_as_skills(home: &Path) -> anyhow::Result<usize>
         let path = entry.path();
 
         if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+
+        if std::fs::read_to_string(&path)?.contains(GENERATED_COMMAND_MARKER) {
             continue;
         }
 
@@ -740,6 +815,72 @@ mod tests {
                 .is_symlink(),
             "codex should still receive canonical skills"
         );
+    }
+
+    #[test]
+    fn canonical_skill_is_invokable_as_opencode_command() {
+        let (_tmp, home) = setup();
+        let skill_dir = canonical_skills_dir(&home).join("rewrite-history");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: rewrite-history\ndescription: Rewrite branch history\n---\n\n# Instructions").unwrap();
+
+        heal_all(&home).unwrap();
+
+        let command = fs::read_to_string(home.join(".config/opencode/commands/rewrite-history.md")).unwrap();
+        assert!(command.contains("description: \"Rewrite branch history\""));
+        assert!(command.contains("Load the `rewrite-history` skill"));
+        assert!(command.contains("$ARGUMENTS"));
+    }
+
+    #[test]
+    fn existing_opencode_command_is_not_replaced_by_skill() {
+        let (_tmp, home) = setup();
+        let skill_dir = canonical_skills_dir(&home).join("research");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: research\ndescription: Research\n---\n").unwrap();
+        let commands = home.join(".config/opencode/commands");
+        fs::create_dir_all(&commands).unwrap();
+        fs::write(commands.join("research.md"), "Custom research command").unwrap();
+
+        heal_all(&home).unwrap();
+
+        assert_eq!(fs::read_to_string(commands.join("research.md")).unwrap(), "Custom research command");
+    }
+
+    #[test]
+    fn configured_opencode_command_takes_precedence_over_skill() {
+        let (_tmp, home) = setup();
+        let skill_dir = canonical_skills_dir(&home).join("research");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: research\ndescription: Research\n---\n").unwrap();
+        let opencode = home.join(".config/opencode");
+        fs::create_dir_all(&opencode).unwrap();
+        fs::write(opencode.join("opencode.json"), r#"{"command":{"research":{"template":"Custom"}}}"#).unwrap();
+
+        heal_all(&home).unwrap();
+
+        assert!(!opencode.join("commands/research.md").exists());
+    }
+
+    #[test]
+    fn generated_command_tracks_skill_and_is_removed_with_it() {
+        let (_tmp, home) = setup();
+        let skill_dir = canonical_skills_dir(&home).join("audit");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill = skill_dir.join("SKILL.md");
+        fs::write(&skill, "---\nname: audit\ndescription: First description\n---\n").unwrap();
+        heal_all(&home).unwrap();
+
+        fs::write(&skill, "---\nname: audit\ndescription: Second description\n---\n").unwrap();
+        heal_all(&home).unwrap();
+
+        let command = home.join(".config/opencode/commands/audit.md");
+        assert!(fs::read_to_string(&command).unwrap().contains("description: \"Second description\""));
+
+        fs::remove_dir_all(skill_dir).unwrap();
+        heal_all(&home).unwrap();
+
+        assert!(!command.exists());
     }
 
     #[test]
