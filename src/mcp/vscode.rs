@@ -70,6 +70,9 @@ impl ConfigurationAdapter for VSCodeStrategy {
                 server.insert("command".into(), json!(cmd_vec));
             }
 
+            if let Some(env) = entry_obj.get("env") {
+                server.insert("env".into(), env.clone());
+            }
             // Flatten extras
             let known = ["command", "args", "url", "type", "env"];
             for (k, v) in entry_obj {
@@ -119,6 +122,11 @@ impl ConfigurationAdapter for VSCodeStrategy {
                 }
             }
 
+            for key in ["headers", "env", "enabled"] {
+                if let Some(value) = entry_obj.get(key) {
+                    agent_entry.insert(key.into(), value.clone());
+                }
+            }
             // Merge extras
             let known = ["type", "command", "url", "headers", "env", "enabled"];
             for (k, v) in entry_obj {

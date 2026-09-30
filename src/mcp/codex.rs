@@ -34,6 +34,13 @@ impl ConfigurationAdapter for CodexStrategy {
             .parse()
             .map_err(|e: toml_edit::TomlError| AdapterError::TomlParse(e.to_string()))?;
 
+        if let Some(inline) = parsed.get("mcp_servers").and_then(|item| item.as_value()).and_then(|value| value.as_inline_table()) {
+            if !inline.is_empty() {
+                return Err(AdapterError::Other("mcp_servers is not a table".into()));
+            }
+            return Ok(json!({"mcp": {}}));
+        }
+
         let mut canonical_servers = serde_json::Map::new();
 
         // Walk all tables matching mcp_servers.<name>
@@ -41,19 +48,40 @@ impl ConfigurationAdapter for CodexStrategy {
             if key != "mcp_servers" {
                 continue;
             }
-            let tbl = table
-                .as_table()
-                .ok_or_else(|| AdapterError::Other("mcp_servers is not a table".into()))?;
+            let Some(tbl) = table.as_table() else {
+                return Err(AdapterError::Other("mcp_servers is not a table".into()));
+            };
 
             for (name, server_tbl) in tbl.iter() {
-                let server = server_tbl
-                    .as_table()
-                    .ok_or_else(|| {
-                        AdapterError::Other(format!(
-                            "Server '{}' is not a table",
-                            name
-                        ))
-                    })?;
+                let Some(server) = server_tbl.as_table() else {
+                    if let Some(inline) = server_tbl.as_value().and_then(|value| value.as_inline_table()) {
+                        if inline.iter().any(|(key, _)| !["command", "args", "url", "env"].contains(&key)) {
+                            return Err(AdapterError::Other(format!("Server '{}' has unsupported inline fields", name)));
+                        }
+                        let command = inline.get("command").and_then(|value| value.as_str());
+                        let url = inline.get("url").and_then(|value| value.as_str());
+                        let mut entry = if let Some(command) = command {
+                            let mut argv = vec![command.to_owned()];
+                            if let Some(args) = inline.get("args").and_then(|value| value.as_array()) {
+                                argv.extend(args.iter().filter_map(|value| value.as_str().map(str::to_owned)));
+                            }
+                            json!({"type": "local", "command": argv})
+                        } else if let Some(url) = url {
+                            json!({"type": "remote", "url": url})
+                        } else {
+                            return Err(AdapterError::Other(format!("Server '{}' has no command or url", name)));
+                        };
+                        if let Some(env) = inline.get("env").and_then(|value| value.as_inline_table()) {
+                            let values: serde_json::Map<String, JsonValue> = env.iter()
+                                .filter_map(|(key, value)| value.as_str().map(|value| (key.to_owned(), json!(value))))
+                                .collect();
+                            entry["env"] = JsonValue::Object(values);
+                        }
+                        canonical_servers.insert(name.to_owned(), entry);
+                        continue;
+                    }
+                    return Err(AdapterError::Other(format!("Server '{}' is not a table", name)));
+                };
 
                 let mut entry = serde_json::Map::new();
                 entry.insert("type".into(), json!("local"));
@@ -148,6 +176,9 @@ impl ConfigurationAdapter for CodexStrategy {
             doc.remove("mcp_servers");
         }
 
+        if !mcp.is_empty() {
+            doc["mcp_servers"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
         // Build mcp_servers table from canonical entries using index syntax.
         // toml_edit's IndexMut auto-creates intermediate tables.
         for (name, entry) in mcp {

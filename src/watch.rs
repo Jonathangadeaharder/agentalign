@@ -4,22 +4,14 @@
 //! paths. On change detection, debounces 500ms, then determines if the change
 //! was a user edit (sync to all agents) or our own write (skip).
 //!
-//! Bidirectional logic:
-//! - Canonical changed → regenerate all agents
-//! - Agent config changed → compute delta vs canonical → apply add/remove/update
-//!   to canonical → propagate canonical to other agents
+//! Canonical and agent config changes are reconciled through the same sync path.
 
 use crate::instructions;
-use crate::mcp::factory::{AgentRegistry, AgentType, McpFormatFactory};
+use crate::mcp::factory::{AgentRegistry, AgentType};
 use crate::rules;
-use crate::shared::config;
-use crate::shared::models::CanonicalWorkspaceState;
 use crate::skills;
 use crate::state::SyncState;
-use crate::sync::delta_merger;
-use crate::sync::transaction;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -37,14 +29,6 @@ const SKILLS_PREFIX: &str = "skills-";
 
 /// IDs for rules directory watch entries.
 const RULES_PREFIX: &str = "rules-";
-
-/// Load the local entries protection set from ~/.agents/local_entries.json.
-fn load_local_entries(agents_dir: &Path) -> HashSet<String> {
-    config::load_local_entries(agents_dir).unwrap_or_else(|e| {
-        eprintln!("[watch] failed to load local_entries.json: {}", e);
-        HashSet::new()
-    })
-}
 
 /// Watcher entry: maps a file path to its agent identifier.
 struct WatchEntry {
@@ -142,6 +126,7 @@ pub fn run_daemon() -> anyhow::Result<()> {
             canonical_path.display()
         );
     }
+    crate::sync::reconcile::sync(&home, false)?;
 
     // Heal instruction symlinks on startup
     match instructions::heal_all(&home) {
@@ -366,289 +351,17 @@ fn process_changes(
         }
     }
 
-    // Recreate any deleted agent configs from canonical
-    if !deleted_agents.is_empty() {
-        let canonical_raw = std::fs::read_to_string(agents_dir.join("mcp_config.json"))?;
-        let canonical: CanonicalWorkspaceState = serde_json::from_str(&canonical_raw)?;
-        for (id, _agent_type, _path) in &deleted_agents {
-            eprintln!("[watch] {} config deleted -> recreating from canonical", id);
+    if changed_canonical || !changed_agents.is_empty() || !deleted_agents.is_empty() {
+        crate::sync::reconcile::sync(home, false)?;
+        for entry in entries {
+            state.update_hash(&entry.id, &entry.path);
         }
-        if !changed_canonical && changed_agents.is_empty() && instr_events.is_empty() {
-            sync_all_agents(home, agents_dir, &canonical, state)?;
-            state.touch();
-            state.save(agents_dir)?;
-            return Ok(());
-        }
-    }
-
-    if !changed_canonical && changed_agents.is_empty() && instr_events.is_empty() {
-        return Ok(());
-    }
-
-    // If only instruction/skills/rules events, no MCP sync needed
-    if !changed_canonical && changed_agents.is_empty() && deleted_agents.is_empty() && (!instr_events.is_empty() || skills_events || rules_events) {
         state.touch();
         state.save(agents_dir)?;
         return Ok(());
-    }
-
-    // Load canonical
-    let canonical_raw = std::fs::read_to_string(agents_dir.join("mcp_config.json"))?;
-    let mut canonical: CanonicalWorkspaceState = serde_json::from_str(&canonical_raw)?;
-
-    if changed_canonical {
-        eprintln!("[watch] canonical changed -> regenerating all agents");
-        sync_all_agents(home, agents_dir, &canonical, state)?;
-        state.update_hash("canonical", &agents_dir.join("mcp_config.json"));
-    } else {
-        let local_entries = load_local_entries(agents_dir);
-
-        for (id, agent_type, path) in &changed_agents {
-            eprintln!("[watch] {} changed -> computing delta to canonical", id);
-            let raw = std::fs::read_to_string(path)?;
-            let strategy = McpFormatFactory::from_agent(*agent_type);
-
-            if let Ok(parsed) = strategy.deserialize_to_canonical(&raw, home) {
-                if let Some(agent_servers) = parsed.get("mcp").and_then(|v| v.as_object()) {
-                    let canonical_json = serde_json::to_value(&canonical)?;
-                    let canonical_servers_json = canonical_json
-                        .get("mcp")
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-
-                    let delta = delta_merger::compute_delta(
-                        &canonical_servers_json,
-                        &serde_json::Value::Object(agent_servers.clone()),
-                        &local_entries,
-                    )?;
-
-                    for key in &delta.entries_to_remove {
-                        canonical.mcp.remove(key);
-                        eprintln!("  - {} (removed from canonical)", key);
-                    }
-
-                    for key in &delta.entries_to_add {
-                        if let Some(v) = agent_servers.get(key) {
-                            let def = serde_json::from_value(v.clone()).unwrap_or_else(|_| {
-                                crate::shared::models::McpServerDefinition {
-                                    transport: crate::shared::models::TransportType::Local,
-                                    command: None,
-                                    url: None,
-                                    headers: None,
-                                    env: None,
-                                    enabled: None,
-                                    extra: HashMap::new(),
-                                }
-                            });
-                            canonical.mcp.insert(key.clone(), def);
-                            eprintln!("  + {} (added to canonical)", key);
-                        }
-                    }
-
-                    for key in &delta.entries_to_update {
-                        // Guard: prevent lossy format-conversion round-trips.
-                        // When the watcher reverse-merges an agent config back to canonical,
-                        // the agent's serialized form may have lost fields (e.g., OpenCode
-                        // splits canonical command:["npx","-y","pkg"] into command:"npx" + args:["-y","pkg"]).
-                        // Skip the update only when canonical has richer data (command/url)
-                        // AND the incoming agent entry is missing that data — meaning the
-                        // agent's format conversion stripped it. This allows legitimate
-                        // user edits (e.g. changing a URL) to propagate to canonical.
-                        if let Some(existing) = canonical.mcp.get(key) {
-                            let canonical_has_data = existing.command.is_some() || existing.url.is_some();
-                            if canonical_has_data {
-                                // Check if the incoming agent entry is lossy
-                                let agent_has_data = agent_servers
-                                    .get(key)
-                                    .and_then(|v| v.as_object())
-                                    .map(|obj| {
-                                        obj.contains_key("command")
-                                            || obj.contains_key("url")
-                                            || obj.contains_key("args")
-                                    })
-                                    .unwrap_or(false);
-
-                                if !agent_has_data {
-                                    eprintln!("  ~ {} (skipped — agent entry is lossy)", key);
-                                    continue;
-                                }
-                            }
-                        }
-                        if let Some(v) = agent_servers.get(key) {
-                            let def = serde_json::from_value(v.clone()).unwrap_or_else(|_| {
-                                crate::shared::models::McpServerDefinition {
-                                    transport: crate::shared::models::TransportType::Local,
-                                    command: None,
-                                    url: None,
-                                    headers: None,
-                                    env: None,
-                                    enabled: None,
-                                    extra: HashMap::new(),
-                                }
-                            });
-                            canonical.mcp.insert(key.clone(), def);
-                            eprintln!("  ~ {} (updated in canonical)", key);
-                        }
-                    }
-                }
-            } else {
-                eprintln!("  warning: failed to parse {} config, skipping delta", id);
-            }
-        }
-
-        // Write updated canonical
-        let canonical_json = serde_json::to_string_pretty(&canonical)?;
-        std::fs::write(agents_dir.join("mcp_config.json"), &canonical_json)?;
-        state.update_hash_from_bytes("canonical", canonical_json.as_bytes());
-
-        // Regenerate all agents EXCEPT the ones that changed
-        let skip: HashSet<String> =
-            changed_agents.iter().map(|(id, _, _)| id.clone()).collect();
-        sync_selected_agents(home, agents_dir, &canonical, state, &skip)?;
     }
 
     state.touch();
     state.save(agents_dir)?;
     Ok(())
 }
-
-/// Sync all agents from canonical with transaction tracking.
-fn sync_all_agents(
-    home: &Path,
-    agents_dir: &Path,
-    canonical: &CanonicalWorkspaceState,
-    state: &mut SyncState,
-) -> anyhow::Result<()> {
-    let descriptors = AgentRegistry::synced_agents(home);
-    let skip_map = config::load_agent_skip(agents_dir).unwrap_or_else(|e| {
-        eprintln!("[watch] failed to load agent_skip.json: {}", e);
-        std::collections::HashMap::new()
-    });
-
-    for descriptor in &descriptors {
-        let filtered_mcp = config::filter_skipped(&canonical.mcp, descriptor.label, &skip_map);
-        let filtered = CanonicalWorkspaceState { mcp: filtered_mcp };
-        let state_json = serde_json::to_value(&filtered)?;
-        let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
-        let target_path = &descriptor.config_path;
-        let id = descriptor.agent_type.as_str();
-
-        if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("Failed to create dir for {}", id))?;
-        }
-
-        match strategy.serialize_from_canonical(&state_json, home) {
-            Ok(output) => {
-                let output = crate::sync::overlay::overlay_onto_existing(&output, target_path);
-                if should_write(target_path, &output) {
-                    match transaction::create_transaction(id, target_path) {
-                        Ok(tx) => {
-                            std::fs::write(target_path, &output)?;
-                            if let Err(e) = transaction::finalize_transaction(&tx, output.as_bytes()) {
-                                eprintln!("  {} tx finalize error: {}", id, e);
-                            }
-                            eprintln!("  {} -> {}", id, target_path.display());
-                        }
-                        Err(e) => {
-                            eprintln!("  {} tx error: {}", id, e);
-                            std::fs::write(target_path, &output)?;
-                            eprintln!("  {} -> {} (no tx)", id, target_path.display());
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("  {} serialize error: {}", id, e);
-            }
-        }
-    }
-
-    // Update hashes from actual file contents
-    for descriptor in &descriptors {
-        let target_path = &descriptor.config_path;
-        let id = descriptor.agent_type.as_str();
-        state.update_hash(id, target_path);
-    }
-
-    Ok(())
-}
-
-/// Sync agents except those in the skip set, with transaction tracking.
-fn sync_selected_agents(
-    home: &Path,
-    agents_dir: &Path,
-    canonical: &CanonicalWorkspaceState,
-    state: &mut SyncState,
-    skip: &HashSet<String>,
-) -> anyhow::Result<()> {
-    let descriptors = AgentRegistry::synced_agents(home);
-    let skip_map = config::load_agent_skip(agents_dir).unwrap_or_else(|e| {
-        eprintln!("[watch] failed to load agent_skip.json: {}", e);
-        std::collections::HashMap::new()
-    });
-
-    for descriptor in &descriptors {
-        let id = descriptor.agent_type.as_str();
-
-        if skip.contains(id) {
-            continue;
-        }
-
-        let filtered_mcp = config::filter_skipped(&canonical.mcp, descriptor.label, &skip_map);
-        let filtered = CanonicalWorkspaceState { mcp: filtered_mcp };
-        let state_json = serde_json::to_value(&filtered)?;
-        let strategy = McpFormatFactory::from_agent(descriptor.agent_type);
-        let target_path = &descriptor.config_path;
-
-        if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("Failed to create dir for {}", id))?;
-        }
-
-        match strategy.serialize_from_canonical(&state_json, home) {
-            Ok(output) => {
-                let output = crate::sync::overlay::overlay_onto_existing(&output, target_path);
-                if should_write(target_path, &output) {
-                    match transaction::create_transaction(id, target_path) {
-                        Ok(tx) => {
-                            std::fs::write(target_path, &output)?;
-                            if let Err(e) = transaction::finalize_transaction(&tx, output.as_bytes()) {
-                                eprintln!("  {} tx finalize error: {}", id, e);
-                            }
-                            eprintln!("  {} -> {}", id, target_path.display());
-                        }
-                        Err(e) => {
-                            eprintln!("  {} tx error: {}", id, e);
-                            std::fs::write(target_path, &output)?;
-                            eprintln!("  {} -> {} (no tx)", id, target_path.display());
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("  {} serialize error: {}", id, e);
-            }
-        }
-    }
-
-    // Update hashes from actual file contents for ALL agents including skipped
-    for descriptor in &descriptors {
-        let target_path = &descriptor.config_path;
-        let id = descriptor.agent_type.as_str();
-        state.update_hash(id, target_path);
-    }
-
-    Ok(())
-}
-
-/// Check if file needs writing (content differs or doesn't exist).
-fn should_write(path: &Path, new_content: &str) -> bool {
-    if !path.exists() {
-        return true;
-    }
-    match std::fs::read_to_string(path) {
-        Ok(existing) => existing != new_content,
-        Err(_) => true,
-    }
-}
-
-use anyhow::Context;

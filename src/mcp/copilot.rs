@@ -131,6 +131,11 @@ impl ConfigurationAdapter for CopilotStrategy {
                 agent_entry.insert("env".into(), env.clone());
             }
 
+            for key in ["headers", "enabled"] {
+                if let Some(value) = entry_obj.get(key) {
+                    agent_entry.insert(key.into(), value.clone());
+                }
+            }
             let known = ["type", "command", "url", "headers", "env", "enabled"];
             for (k, v) in entry_obj {
                 if !known.contains(&k.as_str()) {

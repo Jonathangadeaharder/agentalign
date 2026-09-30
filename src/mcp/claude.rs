@@ -145,6 +145,11 @@ impl ConfigurationAdapter for ClaudeStrategy {
                 }
             }
 
+            for key in ["headers", "env", "enabled"] {
+                if let Some(value) = entry_obj.get(key) {
+                    agent_entry.insert(key.into(), value.clone());
+                }
+            }
             // Merge extras (flattened)
             for (k, v) in entry_obj {
                 let known = ["type", "command", "url", "headers", "env", "enabled"];

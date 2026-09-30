@@ -474,16 +474,22 @@ fn run() -> Result<()> {
         }
 
         Commands::Sync { dry_run } => {
-            let canonical = load_canonical(&home)?;
-
+            let summary = agentalign::sync::reconcile::sync(&home, dry_run)?;
+            for (label, count) in summary {
+                println!(
+                    "  {}: {} servers{}",
+                    label,
+                    count,
+                    if dry_run { " [DRY RUN]" } else { "" }
+                );
+            }
             if dry_run {
-                println!("[DRY RUN] Would push canonical config to all configured agents.");
-                println!("  Servers in canonical: {}", canonical.mcp.len());
-                push_to_agents_impl(&canonical, &home, true)?;
                 return Ok(());
             }
-
-            push_to_agents(&canonical, &home)?;
+            agentalign::instructions::heal_all(&home)?;
+            agentalign::skills::heal_all(&home)?;
+            agentalign::agents::sync_agents(&home, false)?;
+            agentalign::rules::sync_rules(&home, false)?;
             println!("Sync complete.");
         }
 

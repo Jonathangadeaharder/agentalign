@@ -60,6 +60,7 @@ agentalign watch                            # Run the file watcher daemon
 - **Environment interpolation**: normalizes `${VAR}`, `$VAR`, `${env:VAR}` across agent dialects.
 - **Instruction symlink healing**: `~/.agents/AGENTS.md` is the canonical source. Agent files (CLAUDE.md, GEMINI.md, CODEX.md, AGENTS.md) and the VS Code Copilot `agents.instructions.md` are symlinks.
 - **Skills directory syncing**: `~/.agents/skills/` is the canonical source. Per-agent skill dirs are symlinked.
+- **Lossless MCP reconciliation**: `sync` collects each agent's server definitions into `~/.agents/mcp_config.json` before writing. The `agents` map holds per-agent variants, while `mcp` holds shared definitions. A published snapshot distinguishes unchanged outputs from edits and exclusions record agent-specific removals. Native MCP fields must round-trip or sync aborts without writing.
 - **OpenCode slash commands**: `sync` creates command wrappers for canonical skills so `/skill-name` loads the skill. Existing custom commands and built-ins take precedence. Restart OpenCode after syncing.
 - **Rules generation**: splits `~/.agents/AGENTS.md` into path-scoped Cursor `.mdc` and Claude `.md` rule files, regenerated on every `sync` and on AGENTS.md changes via `watch`.
 - **Magic mode**: installs a macOS LaunchAgent that runs `agentalign watch` on login with 500ms debounced bidirectional sync.

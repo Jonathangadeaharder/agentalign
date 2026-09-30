@@ -84,6 +84,9 @@ impl ConfigurationAdapter for GeminiStrategy {
                 server.insert("transport".into(), transport.clone());
             }
 
+            if let Some(env) = entry_obj.get("env") {
+                server.insert("env".into(), env.clone());
+            }
             let known = ["command", "args", "url", "type", "transport", "env"];
             for (k, v) in entry_obj {
                 if !known.contains(&k.as_str()) {
@@ -134,6 +137,11 @@ impl ConfigurationAdapter for GeminiStrategy {
                 }
             }
 
+            for key in ["headers", "env", "enabled"] {
+                if let Some(value) = entry_obj.get(key) {
+                    agent_entry.insert(key.into(), value.clone());
+                }
+            }
             let known = ["type", "command", "url", "headers", "env", "enabled", "transport"];
             for (k, v) in entry_obj {
                 if !known.contains(&k.as_str()) {

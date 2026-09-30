@@ -69,14 +69,10 @@ impl ConfigurationAdapter for OpenCodeStrategy {
 
             // Preserve unknown fields
             let known_keys = ["type", "command", "url", "headers", "enabled"];
-            let mut extra = serde_json::Map::new();
             for (k, v) in entry_obj {
                 if !known_keys.contains(&k.as_str()) {
-                    extra.insert(k.clone(), v.clone());
+                    server.insert(k.clone(), v.clone());
                 }
-            }
-            if !extra.is_empty() {
-                server.insert("extra".into(), JsonValue::Object(extra));
             }
 
             canonical_servers.insert(name.clone(), JsonValue::Object(server));
@@ -131,9 +127,8 @@ impl ConfigurationAdapter for OpenCodeStrategy {
                 }
             }
 
-            // Restore extras
-            if let Some(extra) = entry_obj.get("extra").and_then(|v| v.as_object()) {
-                for (k, v) in extra {
+            for (k, v) in entry_obj {
+                if !["type", "command", "url", "headers", "enabled"].contains(&k.as_str()) {
                     server.insert(k.clone(), v.clone());
                 }
             }
@@ -145,10 +140,6 @@ impl ConfigurationAdapter for OpenCodeStrategy {
         if let Some(obj) = doc.as_object_mut() {
             obj.insert("mcp".into(), JsonValue::Object(mcp_servers));
         }
-
-        // Clean orphan tool rules referencing removed MCP servers
-        let server_names: std::collections::HashSet<String> = mcp.keys().cloned().collect();
-        self.post_sync_cleanup(&mut doc, &server_names)?;
 
         Ok(serde_json::to_string_pretty(&doc)?)
     }
